@@ -1,0 +1,27 @@
+node_modules/
+dist/
+src-tauri/target/
+src-tauri/target-alt/
+src-tauri/src-tauri/target-smoke/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Local smoke-test / probe artifacts (may contain tokens, logs, temp workspaces)
+.smoke/
+.smoke-temp/
+%TEMP%/
+
+# Local launcher logs
+.tmp-*.log
+
+# Extracted upstream sources (local only)
+# Keep extracted upstream sources out of the repo (very large).
+source/openclaw-npm-*/
+source/*.tgz
+source/OPENCLAW_SOURCE_LATEST.txt
+
+# Accidental local folders / screenshots (keep out of GitHub)
+~/
+ae1b0bc5ade4cecfdb722e09d6148ec8.jpg
