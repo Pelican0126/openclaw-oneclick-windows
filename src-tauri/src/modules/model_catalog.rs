@@ -462,7 +462,7 @@ fn fallback_catalog() -> Vec<ModelCatalogItem> {
         catalog_item("google/gemini-2.0-flash", "Gemini 2.0 Flash"),
         catalog_item("moonshot/kimi-k2-0905-preview", "Kimi K2 0905 Preview"),
         catalog_item("moonshot/kimi-k2-250711", "Kimi K2 250711"),
-        catalog_item("moonshot/kimi-2.5", "Kimi 2.5"),
+        catalog_item("moonshot/kimi-2.5", "Kimi k2.5"),
         catalog_item("xai/grok-4", "Grok 4"),
         catalog_item("xai/grok-3", "Grok 3"),
         catalog_item("openrouter/moonshotai/kimi-k2", "OpenRouter Kimi K2"),

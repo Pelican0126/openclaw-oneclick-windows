@@ -24,7 +24,7 @@ export const FALLBACK_MODEL_CATALOG: ModelCatalogItem[] = [
   model("google/gemini-2.5-flash", "Gemini 2.5 Flash"),
   model("moonshot/kimi-k2-0905-preview", "Kimi K2 0905 Preview"),
   model("moonshot/kimi-k2-250711", "Kimi K2 250711"),
-  model("moonshot/kimi-2.5", "Kimi 2.5"),
+  model("moonshot/kimi-2.5", "Kimi k2.5"),
   model("xai/grok-4", "Grok 4"),
   model("xai/grok-3", "Grok 3"),
   model("openrouter/moonshotai/kimi-k2", "OpenRouter Kimi K2"),
