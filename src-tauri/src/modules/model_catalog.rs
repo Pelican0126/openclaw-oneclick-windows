@@ -30,7 +30,10 @@ struct ModelsListEntry {
 }
 
 const MODEL_CATALOG_CACHE_TTL: Duration = Duration::from_secs(45);
-const MODEL_CATALOG_CLI_TIMEOUT: Duration = Duration::from_millis(2_200);
+// First load can be slow on Windows when OpenClaw CLI needs to initialize
+// (or when `npx` needs to warm up). Keep a generous timeout so the UI can
+// show a loader instead of permanently falling back to a tiny built-in list.
+const MODEL_CATALOG_CLI_TIMEOUT: Duration = Duration::from_millis(8_000);
 
 #[derive(Clone)]
 struct ModelCatalogCache {
@@ -41,6 +44,9 @@ struct ModelCatalogCache {
 static MODEL_CATALOG_CACHE: Lazy<Mutex<Option<ModelCatalogCache>>> = Lazy::new(|| Mutex::new(None));
 
 pub fn list_model_catalog() -> Result<Vec<ModelCatalogItem>> {
+    // Ensure the isolated OpenClaw home/config directories exist before invoking CLI.
+    // This keeps `openclaw models list` stable and avoids touching a user's existing ~/.openclaw.
+    let _ = paths::ensure_dirs();
     if let Some(items) = load_cached_catalog() {
         return Ok(items);
     }
@@ -110,7 +116,7 @@ fn merge_catalog_sources(sources: &[Vec<ModelCatalogItem>]) -> Vec<ModelCatalogI
 }
 
 fn list_from_openclaw_cli() -> Result<Vec<ModelCatalogItem>> {
-    let envs = vec![
+    let mut envs = vec![
         (
             "OPENCLAW_CONFIG_PATH".to_string(),
             paths::config_path().to_string_lossy().to_string(),
@@ -120,15 +126,41 @@ fn list_from_openclaw_cli() -> Result<Vec<ModelCatalogItem>> {
             paths::openclaw_home().to_string_lossy().to_string(),
         ),
     ];
+    // Isolate npm/npx cache so the installer never depends on (or corrupts) the
+    // user's global npm cache. This also avoids npm lock corruption issues.
+    let npm_cache = paths::state_dir().join("npm-cache");
+    let _ = std::fs::create_dir_all(&npm_cache);
+    let npm_cache_text = npm_cache.to_string_lossy().to_string();
+    envs.push(("NPM_CONFIG_CACHE".to_string(), npm_cache_text.clone()));
+    envs.push(("npm_config_cache".to_string(), npm_cache_text));
+    envs.push(("npm_config_update_notifier".to_string(), "false".to_string()));
 
     let commands = resolve_openclaw_commands();
     for command in commands {
-        let json_items = run_models_list_json(command.as_str(), &envs)?;
+        let json_items = match run_models_list_json(command.as_str(), &envs) {
+            Ok(v) => v,
+            Err(err) => {
+                logger::warn(&format!(
+                    "openclaw models list --json failed to start via {}: {err}",
+                    command
+                ));
+                vec![]
+            }
+        };
         if !json_items.is_empty() {
             return Ok(json_items);
         }
 
-        let plain_items = run_models_list_plain(command.as_str(), &envs)?;
+        let plain_items = match run_models_list_plain(command.as_str(), &envs) {
+            Ok(v) => v,
+            Err(err) => {
+                logger::warn(&format!(
+                    "openclaw models list --plain failed to start via {}: {err}",
+                    command
+                ));
+                vec![]
+            }
+        };
         if !plain_items.is_empty() {
             return Ok(plain_items);
         }
@@ -190,16 +222,19 @@ fn run_models_list_json(command: &str, envs: &[(String, String)]) -> Result<Vec<
         .models
         .into_iter()
         .filter(|entry| !entry.key.trim().is_empty())
-        .map(|entry| ModelCatalogItem {
-            provider: provider_from_key(entry.key.as_str()),
-            key: entry.key.clone(),
-            name: if entry.name.trim().is_empty() {
-                entry.key
-            } else {
-                entry.name
-            },
-            available: entry.available,
-            missing: entry.missing,
+        .map(|entry| {
+            let key = normalize_known_model_key(entry.key.as_str());
+            ModelCatalogItem {
+                provider: provider_from_key(key.as_str()),
+                key: key.clone(),
+                name: if entry.name.trim().is_empty() {
+                    key
+                } else {
+                    entry.name
+                },
+                available: entry.available,
+                missing: entry.missing,
+            }
         })
         .collect::<Vec<_>>();
 
@@ -264,13 +299,14 @@ fn parse_models_plain(raw: &str) -> Vec<ModelCatalogItem> {
             }
             let token = trimmed.split_whitespace().next().unwrap_or("");
             let key = token.trim_end_matches(',').trim_end_matches(':').trim();
-            if !looks_like_model_key(key) {
+            let key = normalize_known_model_key(key);
+            if !looks_like_model_key(key.as_str()) {
                 return None;
             }
             Some(ModelCatalogItem {
-                key: key.to_string(),
-                provider: provider_from_key(key),
-                name: key.to_string(),
+                key: key.clone(),
+                provider: provider_from_key(key.as_str()),
+                name: key,
                 available: None,
                 missing: false,
             })
@@ -365,11 +401,10 @@ fn resolve_openclaw_commands() -> Vec<String> {
 
 fn is_model_list_command_usable(command: &str) -> bool {
     if is_npx_command(command) {
-        let Ok(out) = shell::run_command(command, &["--yes", "openclaw", "--version"], None, &[])
-        else {
-            return false;
-        };
-        return out.code == 0;
+        // Do not run `npx openclaw --version` as a "usability check" here:
+        // it can be slow and it can fail due to transient npm cache issues.
+        // We'll attempt the real `models list` and fall back if it fails.
+        return shell::command_exists("npx").is_some();
     }
 
     let Ok(out) = shell::run_command(command, &["--version"], None, &[]) else {
@@ -395,14 +430,15 @@ fn list_from_config_json() -> Vec<ModelCatalogItem> {
         .and_then(|v| v.as_object())
     {
         for (key, item) in entries {
+            let normalized_key = normalize_known_model_key(key);
             let name = item
                 .get("alias")
                 .and_then(|v| v.as_str())
                 .map(|v| v.to_string())
-                .unwrap_or_else(|| key.to_string());
+                .unwrap_or_else(|| normalized_key.clone());
             out.push(ModelCatalogItem {
-                key: key.to_string(),
-                provider: provider_from_key(key),
+                key: normalized_key.clone(),
+                provider: provider_from_key(normalized_key.as_str()),
                 name,
                 available: None,
                 missing: false,
@@ -415,10 +451,11 @@ fn list_from_config_json() -> Vec<ModelCatalogItem> {
         .and_then(|v| v.as_str())
         .filter(|v| !v.trim().is_empty())
     {
+        let primary = normalize_known_model_key(primary);
         out.push(ModelCatalogItem {
-            key: primary.to_string(),
-            provider: provider_from_key(primary),
-            name: primary.to_string(),
+            key: primary.clone(),
+            provider: provider_from_key(primary.as_str()),
+            name: primary,
             available: None,
             missing: false,
         });
@@ -429,10 +466,11 @@ fn list_from_config_json() -> Vec<ModelCatalogItem> {
     {
         for item in fallbacks {
             if let Some(model_key) = item.as_str() {
+                let model_key = normalize_known_model_key(model_key);
                 out.push(ModelCatalogItem {
-                    key: model_key.to_string(),
-                    provider: provider_from_key(model_key),
-                    name: model_key.to_string(),
+                    key: model_key.clone(),
+                    provider: provider_from_key(model_key.as_str()),
+                    name: model_key,
                     available: None,
                     missing: false,
                 });
@@ -460,9 +498,20 @@ fn fallback_catalog() -> Vec<ModelCatalogItem> {
         catalog_item("google/gemini-2.5-pro", "Gemini 2.5 Pro"),
         catalog_item("google/gemini-2.5-flash", "Gemini 2.5 Flash"),
         catalog_item("google/gemini-2.0-flash", "Gemini 2.0 Flash"),
+        // Moonshot (Kimi) model refs are: moonshot/<modelId>.
+        // Keep this list aligned with upstream OpenClaw docs as a fallback when CLI listing is unavailable.
         catalog_item("moonshot/kimi-k2-0905-preview", "Kimi K2 0905 Preview"),
+        catalog_item("moonshot/kimi-k2-turbo-preview", "Kimi K2 Turbo"),
+        catalog_item("moonshot/kimi-k2-thinking", "Kimi K2 Thinking"),
+        catalog_item(
+            "moonshot/kimi-k2-thinking-turbo",
+            "Kimi K2 Thinking Turbo",
+        ),
         catalog_item("moonshot/kimi-k2-250711", "Kimi K2 250711"),
-        catalog_item("moonshot/kimi-2.5", "Kimi k2.5"),
+        // OpenClaw uses `kimi-k2.5` (not `kimi-2.5`) as the Moonshot provider model id.
+        catalog_item("moonshot/kimi-k2.5", "Kimi K2.5"),
+        // Kimi Coding is a separate provider (different endpoint + key): kimi-coding/<modelId>.
+        catalog_item("kimi-coding/k2p5", "Kimi K2.5 (Coding)"),
         catalog_item("xai/grok-4", "Grok 4"),
         catalog_item("xai/grok-3", "Grok 3"),
         catalog_item("openrouter/moonshotai/kimi-k2", "OpenRouter Kimi K2"),
@@ -506,6 +555,20 @@ fn provider_from_key(model_key: &str) -> String {
         .map(|(provider, _)| provider.trim().to_string())
         .filter(|v| !v.is_empty())
         .unwrap_or_else(|| "unknown".to_string())
+}
+
+fn normalize_known_model_key(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    // Backward compatibility: older UI/builds used the wrong Kimi 2.5 id.
+    // OpenClaw uses `kimi-k2.5`.
+    let lowered = trimmed.to_ascii_lowercase();
+    if lowered == "moonshot/kimi-2.5" || lowered == "moonshot/kimi2.5" {
+        return "moonshot/kimi-k2.5".to_string();
+    }
+    trimmed.to_string()
 }
 
 #[cfg(test)]
@@ -556,7 +619,7 @@ anthropic/claude-sonnet-4-5 available
     #[test]
     fn fallback_catalog_includes_multiple_providers_and_kimi_25() {
         let items = fallback_catalog();
-        assert!(items.iter().any(|item| item.key == "moonshot/kimi-2.5"));
+        assert!(items.iter().any(|item| item.key == "moonshot/kimi-k2.5"));
         assert!(items.iter().any(|item| item.key == "openai/gpt-5.2"));
         assert!(items
             .iter()

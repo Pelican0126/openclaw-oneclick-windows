@@ -5,11 +5,34 @@ chcp 65001 >nul
 cd /d "%~dp0"
 
 set "MODE=%~1"
-if "%MODE%"=="" set "MODE=run"
+
+rem If we are inside the repo workspace and user didn't provide a mode, default to
+rem dev so we always run the latest source (avoids accidentally launching an old
+rem installed EXE / stale target build during debugging).
+set "WORKSPACE=0"
+if exist "%~dp0package.json" if exist "%~dp0src-tauri\\Cargo.toml" set "WORKSPACE=1"
+if "%MODE%"=="" (
+  if "%WORKSPACE%"=="1" (
+    set "MODE=dev"
+  ) else (
+    set "MODE=run"
+  )
+)
 
 echo ======================================================
-echo OpenClaw Installer - One Click Launch
+if /I "%MODE%"=="dev" (
+  echo OpenClaw Installer - One Click Launch (Dev Mode)
+) else if /I "%MODE%"=="--dev" (
+  echo OpenClaw Installer - One Click Launch (Dev Mode)
+) else if /I "%MODE%"=="--preflight" (
+  echo OpenClaw Installer - One Click Launch (Dev Mode)
+) else (
+  echo OpenClaw Installer - One Click Launch
+)
 echo ======================================================
+if "%WORKSPACE%"=="1" (
+  echo [INFO] Workspace detected.
+)
 
 set "RELEASE_EXE=%~dp0src-tauri\target\release\openclaw-installer.exe"
 set "RELEASE_EXE_ALT=%~dp0src-tauri\target\release\OpenClaw Installer.exe"

@@ -63,11 +63,19 @@ function parseModelKey(value: string): { provider: string; model: string } | nul
   return { provider: provider.trim(), model };
 }
 
+function normalizeKnownModelKey(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  const lowered = trimmed.toLowerCase();
+  if (lowered === "moonshot/kimi-2.5" || lowered === "moonshot/kimi2.5") return "moonshot/kimi-k2.5";
+  return trimmed;
+}
+
 function normalizeModelKey(raw: string, fallbackProvider: string): string {
   const value = raw.trim();
   if (!value) return `${fallbackProvider || "openai"}/gpt-5.2`;
-  if (value.includes("/")) return value;
-  return `${fallbackProvider || "openai"}/${value}`;
+  if (value.includes("/")) return normalizeKnownModelKey(value);
+  return normalizeKnownModelKey(`${fallbackProvider || "openai"}/${value}`);
 }
 
 function migrateLegacyInput(input: OpenClawConfigInput): OpenClawConfigInput {
@@ -116,6 +124,17 @@ function validateStep(stepIndex: number, form: OpenClawConfigInput, lang: Langua
   if (stepIndex === 0) {
     if (!form.install_dir.trim()) {
       return `${t(lang, "installDir")} is required.`;
+    }
+    // Hard safety guard: never allow the classic user profile state dir.
+    const installDirLower = form.install_dir
+      .trim()
+      .toLowerCase()
+      .replace(/\//g, "\\")
+      .replace(/\\+$/, ""); // tolerate trailing slashes like "...\\.openclaw\\"
+    const unsafeSuffixes = ["\\.openclaw", "\\.clawdbot", "\\.moldbot", "\\.moltbot"];
+    const unsafeExact = unsafeSuffixes.map((suffix) => `%userprofile%${suffix}`);
+    if (unsafeExact.includes(installDirLower) || unsafeSuffixes.some((suffix) => installDirLower.endsWith(suffix))) {
+      return t(lang, "installDirUnsafe");
     }
     if (!form.bind_address.trim()) {
       return `${t(lang, "bindAddress")} is required.`;
@@ -625,7 +644,7 @@ export function WizardPage({ lang, initial, onBack, onSubmit }: WizardPageProps)
               min={1}
               max={65535}
               value={form.port}
-              onChange={(e) => setForm({ ...form, port: Number(e.target.value) || 18789 })}
+              onChange={(e) => setForm({ ...form, port: Number(e.target.value) || 28789 })}
             />
           </label>
           <label>

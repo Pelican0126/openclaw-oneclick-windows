@@ -19,6 +19,11 @@ npm run tauri:dev
 npm run tauri:build
 ```
 
+打包完成后，安装包会自动复制到项目根目录的 `release/`，方便直接上传到 GitHub Releases：
+
+- `release/OpenClawInstaller-v{version}-setup.exe`
+- `release/OpenClawInstaller-v{version}.msi`
+
 ## 设置 App 图标（Windows）/ App Icon (Windows)
 
 1. 把图标保存为项目根目录 `app-icon.png`（建议 1024x1024、透明背景、四周留白）
@@ -65,4 +70,3 @@ npm run tauri:build
 # 在当前终端启动隔离网关（前台运行）
 .\scripts\start-isolated-test.ps1
 ```
-

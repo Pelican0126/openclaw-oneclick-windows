@@ -31,20 +31,37 @@ const KIMI_BASE_URL_GLOBAL: &str = "https://api.moonshot.ai/v1";
 
 pub fn configure(payload: &OpenClawConfigInput) -> Result<ConfigureResult> {
     validate_payload(payload)?;
+    // Normalize known legacy model ids so old configs don't keep breaking new installs.
+    // (Example: "moonshot/kimi-2.5" -> "moonshot/kimi-k2.5")
+    let mut payload = payload.clone();
+    payload.model_chain.primary = normalize_known_model_key(payload.model_chain.primary.as_str());
+    payload.model_chain.fallbacks = payload
+        .model_chain
+        .fallbacks
+        .iter()
+        .map(|item| normalize_known_model_key(item))
+        .filter(|item| !item.trim().is_empty())
+        .collect();
+    // Bind all OpenClaw state/config writes to the chosen install directory so we never
+    // mix with an existing `%USERPROFILE%\\.openclaw` installation.
+    let install_dir = paths::normalize_path(&payload.install_dir)?;
+    std::env::set_var(
+        "OPENCLAW_INSTALLER_OPENCLAW_HOME",
+        install_dir.to_string_lossy().to_string(),
+    );
     paths::ensure_dirs()?;
     std::fs::create_dir_all(paths::openclaw_home())?;
-    let install_dir = paths::normalize_path(&payload.install_dir)?;
     std::fs::create_dir_all(&install_dir)?;
 
     let mut warnings = Vec::<String>::new();
 
-    run_onboard(payload, &mut warnings)?;
-    apply_provider_keys(payload, &mut warnings)?;
+    run_onboard(&payload, &mut warnings)?;
+    apply_provider_keys(&payload, &mut warnings)?;
     apply_model_chain(&payload.model_chain, &mut warnings)?;
-    apply_kimi_region_base_url(payload, &mut warnings)?;
-    apply_feature_toggles(payload, &mut warnings)?;
-    apply_selected_skills(payload, &mut warnings)?;
-    apply_channel_integrations(payload, &mut warnings)?;
+    apply_kimi_region_base_url(&payload, &mut warnings)?;
+    apply_feature_toggles(&payload, &mut warnings)?;
+    apply_selected_skills(&payload, &mut warnings)?;
+    apply_channel_integrations(&payload, &mut warnings)?;
 
     let config_path = paths::config_path();
     warnings.extend(set_windows_acl(&config_path));
@@ -53,7 +70,7 @@ pub fn configure(payload: &OpenClawConfigInput) -> Result<ConfigureResult> {
         warnings.extend(set_windows_acl(&env_path));
     }
 
-    state_store::save_last_config(payload)?;
+    state_store::save_last_config(&payload)?;
 
     logger::info(&format!(
         "Configuration updated via OpenClaw CLI: {}",
@@ -74,18 +91,27 @@ pub fn switch_model(primary: &str, fallbacks: &[String]) -> Result<ConfigureResu
     if primary.trim().is_empty() {
         return Err(anyhow!("Primary model cannot be empty"));
     }
+    let primary = normalize_known_model_key(primary);
     let mut warnings = Vec::<String>::new();
     apply_model_chain(
         &ModelChain {
-            primary: primary.trim().to_string(),
-            fallbacks: normalize_fallbacks(fallbacks),
+            primary: primary.clone(),
+            fallbacks: normalize_fallbacks(fallbacks)
+                .into_iter()
+                .map(|item| normalize_known_model_key(item.as_str()))
+                .filter(|item| !item.trim().is_empty())
+                .collect(),
         },
         &mut warnings,
     )?;
     if let Ok(Some(mut last)) = state_store::load_last_config() {
-        last.model_chain.primary = primary.trim().to_string();
-        last.model_chain.fallbacks = normalize_fallbacks(fallbacks);
-        if let Some(provider) = provider_from_model_key(primary) {
+        last.model_chain.primary = primary.clone();
+        last.model_chain.fallbacks = normalize_fallbacks(fallbacks)
+            .into_iter()
+            .map(|item| normalize_known_model_key(item.as_str()))
+            .filter(|item| !item.trim().is_empty())
+            .collect();
+        if let Some(provider) = provider_from_model_key(primary.as_str()) {
             last.provider = provider.to_string();
         }
         state_store::save_last_config(&last)?;
@@ -175,6 +201,13 @@ pub fn read_current_config() -> Result<OpenClawFileConfig> {
         })
         .unwrap_or_else(|| last.model_chain.fallbacks.clone());
 
+    let primary = normalize_known_model_key(primary.as_str());
+    let fallbacks = fallbacks
+        .into_iter()
+        .map(|item| normalize_known_model_key(item.as_str()))
+        .filter(|item| !item.trim().is_empty())
+        .collect::<Vec<_>>();
+
     let provider = provider_from_model_key(&primary)
         .map(|s| s.to_string())
         .unwrap_or_else(|| last.provider.clone());
@@ -222,7 +255,7 @@ pub fn read_current_config() -> Result<OpenClawFileConfig> {
         base_url: optional_non_empty(last.base_url),
         proxy: optional_non_empty(last.proxy),
         bind_address,
-        port: if port == 0 { 18789 } else { port },
+        port: if port == 0 { 28789 } else { port },
         install_dir: install
             .map(|v| v.install_dir)
             .unwrap_or_else(|| paths::openclaw_home().to_string_lossy().to_string()),
@@ -467,14 +500,15 @@ fn run_onboard(payload: &OpenClawConfigInput, warnings: &mut Vec<String>) -> Res
 }
 
 fn apply_model_chain(model_chain: &ModelChain, warnings: &mut Vec<String>) -> Result<()> {
-    if model_chain.primary.trim().is_empty() {
+    let primary = normalize_known_model_key(model_chain.primary.as_str());
+    if primary.trim().is_empty() {
         return Err(anyhow!("Primary model is required."));
     }
     let set_out = run_openclaw_cli(
         &[
             "models".to_string(),
             "set".to_string(),
-            model_chain.primary.trim().to_string(),
+            primary.clone(),
         ],
         None,
     )?;
@@ -491,7 +525,8 @@ fn apply_model_chain(model_chain: &ModelChain, warnings: &mut Vec<String>) -> Re
     shell::ensure_success("openclaw models fallbacks clear", &clear_out)?;
 
     for fallback in normalize_fallbacks(&model_chain.fallbacks) {
-        if fallback == model_chain.primary.trim() {
+        let fallback = normalize_known_model_key(fallback.as_str());
+        if fallback == primary {
             continue;
         }
         let out = run_openclaw_cli(
@@ -1240,6 +1275,17 @@ fn bind_address_to_mode(bind: &str) -> &'static str {
 }
 
 fn validate_payload(payload: &OpenClawConfigInput) -> Result<()> {
+    if payload.install_dir.trim().is_empty() {
+        return Err(anyhow!("Install directory is required."));
+    }
+    let install_dir = paths::normalize_path(&payload.install_dir)?;
+    if paths::is_user_profile_default_openclaw_dir(&install_dir) {
+        return Err(anyhow!(
+            "Unsafe install directory detected: {}. For isolation, choose a different folder (recommended: %LOCALAPPDATA%\\\\OpenClawInstaller\\\\openclaw).",
+            install_dir.to_string_lossy()
+        ));
+    }
+
     let provider = resolve_provider(payload)?;
     if provider.trim().is_empty() {
         return Err(anyhow!("Provider is required."));
@@ -1383,6 +1429,20 @@ fn provider_from_model_key(model: &str) -> Option<&str> {
         return None;
     }
     Some(provider.trim())
+}
+
+fn normalize_known_model_key(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    // Backward compatibility: older UI/builds used the wrong Kimi 2.5 id.
+    // OpenClaw uses `kimi-k2.5`.
+    let lowered = trimmed.to_ascii_lowercase();
+    if lowered == "moonshot/kimi-2.5" || lowered == "moonshot/kimi2.5" {
+        return "moonshot/kimi-k2.5".to_string();
+    }
+    trimmed.to_string()
 }
 
 fn normalize_auth_provider(provider: &str) -> String {

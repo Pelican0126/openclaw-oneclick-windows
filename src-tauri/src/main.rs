@@ -12,12 +12,49 @@ use tauri::{
     AppHandle, Manager, WindowEvent,
 };
 
-use modules::{logger, paths, process};
+use modules::{logger, paths, process, state_store};
 
 const MAIN_WINDOW_LABEL: &str = "main";
 const TRAY_MENU_TOGGLE_ID: &str = "tray_toggle";
 const TRAY_MENU_STOP_OPENCLAW_ID: &str = "tray_stop_openclaw";
 const TRAY_MENU_EXIT_ID: &str = "tray_exit";
+
+fn init_openclaw_home_override() {
+    // 1) Respect explicit overrides (e.g. smoke/dev scripts).
+    if let Ok(value) = std::env::var("OPENCLAW_INSTALLER_OPENCLAW_HOME") {
+        if !value.trim().is_empty() {
+            return;
+        }
+    }
+
+    // 2) If this installer has already installed OpenClaw, pin the home to that install_dir
+    //    to keep future runs consistent and isolated from any other OpenClaw on the machine.
+    if let Ok(Some(state)) = state_store::load_install_state() {
+        if !state.install_dir.trim().is_empty() {
+            if let Ok(dir) = paths::normalize_path(&state.install_dir) {
+                if !paths::is_user_profile_default_openclaw_dir(&dir) {
+                    std::env::set_var(
+                        "OPENCLAW_INSTALLER_OPENCLAW_HOME",
+                        dir.to_string_lossy().to_string(),
+                    );
+                    return;
+                }
+                logger::warn(&format!(
+                    "Ignoring legacy install_dir (unsafe): {}",
+                    dir.to_string_lossy()
+                ));
+            }
+        }
+    }
+
+    // 3) Default: an isolated per-user directory under LocalAppData.
+    //    This avoids touching `%USERPROFILE%\\.openclaw` by default.
+    let fallback = paths::default_isolated_openclaw_home();
+    std::env::set_var(
+        "OPENCLAW_INSTALLER_OPENCLAW_HOME",
+        fallback.to_string_lossy().to_string(),
+    );
+}
 
 fn reveal_main_window(app: &AppHandle) {
     if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
@@ -97,6 +134,7 @@ fn setup_tray(app: &mut tauri::App) -> tauri::Result<()> {
 }
 
 fn main() {
+    init_openclaw_home_override();
     if let Err(err) = paths::ensure_dirs() {
         eprintln!("Failed to initialize directories: {err}");
     }
@@ -160,4 +198,3 @@ fn main() {
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
-

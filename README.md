@@ -27,7 +27,7 @@ Windows GUI installer/maintainer for OpenClaw (Tauri + Rust + React).
 
 - Installer 日志：`%APPDATA%\\OpenClawInstaller\\logs\\*.log`
 - 备份目录：`%APPDATA%\\OpenClawInstaller\\backups`
-- OpenClaw 默认目录：`%USERPROFILE%\\.openclaw`
+- OpenClaw 安装目录（隔离，默认）：`%LOCALAPPDATA%\\OpenClawInstaller\\openclaw`（可在向导修改；默认不会触碰你的 `%USERPROFILE%\\.openclaw`）
 
 ### 文档
 
@@ -57,7 +57,7 @@ Notes:
 
 - Installer logs: `%APPDATA%\\OpenClawInstaller\\logs\\*.log`
 - Backups: `%APPDATA%\\OpenClawInstaller\\backups`
-- Default OpenClaw home: `%USERPROFILE%\\.openclaw`
+- OpenClaw install dir (isolated by default): `%LOCALAPPDATA%\\OpenClawInstaller\\openclaw` (change it in Wizard -> Install directory; by default it will not touch `%USERPROFILE%\\.openclaw`)
 
 ### Docs
 
@@ -66,4 +66,3 @@ Notes:
 - Security: `docs/SECURITY.md`
 - Architecture: `docs/ARCHITECTURE.md`
 - Developer notes: `docs/DEV.md`
-

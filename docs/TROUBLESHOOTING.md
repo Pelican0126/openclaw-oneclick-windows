@@ -72,7 +72,7 @@ Current status:
 ## 5. OpenClaw start fails after install
 Checklist:
 1. Ensure config exists:
-   - `%USERPROFILE%\.openclaw\openclaw.json`
+   - `<install_dir>\openclaw.json` (default: `%LOCALAPPDATA%\OpenClawInstaller\openclaw\openclaw.json`)
 2. Check logs:
    - `%APPDATA%\OpenClawInstaller\logs\openclaw-stdout.log`
    - `%APPDATA%\OpenClawInstaller\logs\openclaw-stderr.log`
@@ -110,8 +110,9 @@ Actions:
 ## 8. Security warnings
 If ACL warning persists:
 ```powershell
-icacls "$env:USERPROFILE\.openclaw\openclaw.json" /inheritance:r
-icacls "$env:USERPROFILE\.openclaw\openclaw.json" /grant:r "$env:USERNAME:(R,W)"
-icacls "$env:USERPROFILE\.openclaw\.env" /inheritance:r
-icacls "$env:USERPROFILE\.openclaw\.env" /grant:r "$env:USERNAME:(R,W)"
+$installDir = "$env:LOCALAPPDATA\\OpenClawInstaller\\openclaw"
+icacls "$installDir\\openclaw.json" /inheritance:r
+icacls "$installDir\\openclaw.json" /grant:r "$env:USERNAME:(R,W)"
+icacls "$installDir\\.env" /inheritance:r
+icacls "$installDir\\.env" /grant:r "$env:USERNAME:(R,W)"
 ```

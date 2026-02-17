@@ -10,7 +10,8 @@ import { SuccessPage } from "./pages/SuccessPage";
 import { MaintenancePage } from "./pages/MaintenancePage";
 
 const defaultConfig: OpenClawConfigInput = {
-  install_dir: "%USERPROFILE%\\.openclaw",
+  // Isolated by default: do not touch an existing `%USERPROFILE%\\.openclaw`.
+  install_dir: "%LOCALAPPDATA%\\OpenClawInstaller\\openclaw",
   provider: "openai",
   model_chain: {
     primary: "openai/gpt-5.2",
@@ -28,7 +29,8 @@ const defaultConfig: OpenClawConfigInput = {
   selected_skills: ["healthcheck", "skill-creator"],
   base_url: "",
   proxy: "",
-  port: 18789,
+  // Use a non-default port so we don't collide with an existing OpenClaw gateway.
+  port: 28789,
   bind_address: "127.0.0.1",
   source_method: "npm",
   source_url: "",

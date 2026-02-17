@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use anyhow::{anyhow, Context, Result};
 use reqwest::Client;
@@ -23,7 +23,6 @@ async fn install_openclaw_inner(
     payload: &OpenClawConfigInput,
     allow_reinstall: bool,
 ) -> Result<InstallResult> {
-    paths::ensure_dirs()?;
     if !allow_reinstall {
         // Hard lock: once install state exists, installer flow must not reinstall
         // until user explicitly uninstalls from Maintenance.
@@ -36,6 +35,19 @@ async fn install_openclaw_inner(
         }
     }
     let install_dir = paths::normalize_path(&payload.install_dir)?;
+    if paths::is_user_profile_default_openclaw_dir(&install_dir) {
+        return Err(anyhow!(
+            "Unsafe install directory detected: {}. For isolation, choose a different folder (recommended: %LOCALAPPDATA%\\\\OpenClawInstaller\\\\openclaw).",
+            install_dir.to_string_lossy()
+        ));
+    }
+    // Keep installer and OpenClaw state strictly bound to the chosen install directory.
+    // This prevents mixing with any existing `%USERPROFILE%\\.openclaw` on the machine.
+    std::env::set_var(
+        "OPENCLAW_INSTALLER_OPENCLAW_HOME",
+        install_dir.to_string_lossy().to_string(),
+    );
+    paths::ensure_dirs()?;
     fs::create_dir_all(&install_dir)?;
 
     let env_vars = proxy_env(payload);
@@ -78,11 +90,19 @@ async fn install_openclaw_inner(
 fn install_from_npm(install_dir: &Path, env_vars: &[(String, String)]) -> Result<()> {
     let npm_exe = shell::command_exists("npm")
         .ok_or_else(|| anyhow!("npm not found. Please install Node.js first."))?;
-    let _ = install_dir;
-    logger::info("Running official install: npm install -g openclaw@latest");
+    ensure_local_package_json(install_dir)?;
+
+    // IMPORTANT: Never install globally. Global installs can overwrite an existing OpenClaw
+    // the user is already using on this machine.
+    let dir = install_dir.to_string_lossy().to_string();
+    logger::info(&format!(
+        "Installing OpenClaw locally: npm --prefix \"{}\" install openclaw@latest",
+        dir
+    ));
     let install_args: Vec<&str> = vec![
+        "--prefix",
+        dir.as_str(),
         "install",
-        "-g",
         "openclaw@latest",
         "--no-audit",
         "--no-fund",
@@ -93,7 +113,7 @@ fn install_from_npm(install_dir: &Path, env_vars: &[(String, String)]) -> Result
     let mut out: Option<shell::CmdOutput> = None;
     for attempt in attempts {
         logger::info(&format!("npm install attempt: {}", attempt.label));
-        let mut current = shell::run_command(
+        let current = shell::run_command(
             npm_exe.as_str(),
             &install_args,
             None,
@@ -101,35 +121,9 @@ fn install_from_npm(install_dir: &Path, env_vars: &[(String, String)]) -> Result
         )
         .with_context(|| format!("failed to start npm executable: {npm_exe}"))?;
         log_command_output(
-            &format!("npm install -g openclaw@latest [{}]", attempt.label),
+            &format!("npm install openclaw@latest (local) [{}]", attempt.label),
             &current,
         );
-        if current.code != 0 && is_npm_eexist_conflict(&current) {
-            logger::warn(
-                "Detected npm EEXIST conflict for OpenClaw shim. Trying automatic cleanup and retry.",
-            );
-            match cleanup_npm_openclaw_shims(npm_exe.as_str(), attempt.env.as_slice()) {
-                Ok(removed) if !removed.is_empty() => {
-                    logger::info(&format!(
-                        "Removed conflicting shim files: {}",
-                        removed.join(", ")
-                    ));
-                }
-                Ok(_) => logger::warn("No conflicting shim files were found to remove."),
-                Err(err) => logger::warn(&format!("Failed to cleanup shim files: {err}")),
-            }
-            current = shell::run_command(
-                npm_exe.as_str(),
-                &install_args,
-                None,
-                attempt.env.as_slice(),
-            )
-            .with_context(|| format!("failed to start npm executable: {npm_exe}"))?;
-            log_command_output(
-                &format!("npm install -g openclaw@latest [{}] (retry)", attempt.label),
-                &current,
-            );
-        }
         if current.code == 0 {
             return Ok(());
         }
@@ -148,7 +142,7 @@ fn install_from_npm(install_dir: &Path, env_vars: &[(String, String)]) -> Result
     if let Some(existing) = shell::command_exists("openclaw") {
         if command_is_usable(existing.as_str()) {
             logger::warn(&format!(
-                "npm install failed, fallback to existing openclaw binary: {existing}"
+                "npm local install failed, fallback to existing openclaw binary: {existing}"
             ));
             return Ok(());
         }
@@ -157,15 +151,9 @@ fn install_from_npm(install_dir: &Path, env_vars: &[(String, String)]) -> Result
             existing
         ));
     }
-    if let Some(local_home_cmd) = resolve_local_home_openclaw() {
-        logger::warn(&format!(
-            "npm install failed, fallback to local OpenClaw command: {local_home_cmd}"
-        ));
-        return Ok(());
-    }
     if is_npm_git_fetch_failure(&out) {
         return Err(anyhow!(
-            "npm install openclaw@latest failed after mirror retries. Git dependencies from GitHub are unreachable or unauthorized in current network. Configure a working HTTP(S) proxy in Wizard -> Advanced, or allow access to github.com / gitclone.com / gh.llkk.cc. Last error: {}",
+            "npm install openclaw@latest (local) failed after mirror retries. Git dependencies from GitHub are unreachable or unauthorized in current network. Configure a working HTTP(S) proxy in Wizard -> Advanced, or allow access to github.com / gitclone.com / gh.llkk.cc. Last error: {}",
             if out.stderr.is_empty() {
                 out.stdout.clone()
             } else {
@@ -173,15 +161,19 @@ fn install_from_npm(install_dir: &Path, env_vars: &[(String, String)]) -> Result
             }
         ));
     }
-    shell::ensure_success("npm install openclaw@latest", &out)?;
+    shell::ensure_success("npm install openclaw@latest (local)", &out)?;
     Ok(())
 }
 
-fn is_npm_eexist_conflict(out: &shell::CmdOutput) -> bool {
-    let text = merged_output_lower(out);
-    text.contains("eexist")
-        && text.contains("openclaw")
-        && (text.contains("file exists") || text.contains("file already exists"))
+fn ensure_local_package_json(install_dir: &Path) -> Result<()> {
+    let path = install_dir.join("package.json");
+    if path.exists() {
+        return Ok(());
+    }
+    // Minimal package.json to make `npm --prefix <dir> install ...` deterministic.
+    let content = "{\n  \"name\": \"openclaw-installer-local\",\n  \"private\": true\n}\n";
+    fs::write(&path, content)?;
+    Ok(())
 }
 
 fn is_npm_git_fetch_failure(out: &shell::CmdOutput) -> bool {
@@ -233,48 +225,6 @@ fn npm_install_attempts(base_env: &[(String, String)]) -> Vec<NpmInstallAttempt>
         });
     }
     attempts
-}
-
-fn cleanup_npm_openclaw_shims(npm_exe: &str, env_vars: &[(String, String)]) -> Result<Vec<String>> {
-    let shim_dir = resolve_npm_shim_dir(npm_exe, env_vars)
-        .ok_or_else(|| anyhow!("Unable to resolve npm global shim directory."))?;
-    let candidates = [
-        shim_dir.join("openclaw"),
-        shim_dir.join("openclaw.cmd"),
-        shim_dir.join("openclaw.ps1"),
-    ];
-    let mut removed = Vec::<String>::new();
-    for candidate in candidates {
-        if candidate.exists() {
-            fs::remove_file(&candidate)
-                .with_context(|| format!("failed to remove {}", candidate.to_string_lossy()))?;
-            removed.push(candidate.to_string_lossy().to_string());
-        }
-    }
-    Ok(removed)
-}
-
-fn resolve_npm_shim_dir(npm_exe: &str, env_vars: &[(String, String)]) -> Option<PathBuf> {
-    // npm prefix -g is stable on Windows and points to roaming npm shim directory.
-    let out = shell::run_command(npm_exe, &["prefix", "-g"], None, env_vars).ok()?;
-    if out.code != 0 {
-        return None;
-    }
-    let prefix = out
-        .stdout
-        .lines()
-        .next()
-        .map(|s| s.trim())
-        .filter(|s| !s.is_empty())?;
-    let prefix_path = PathBuf::from(prefix);
-    #[cfg(windows)]
-    {
-        return Some(prefix_path);
-    }
-    #[cfg(not(windows))]
-    {
-        return Some(prefix_path.join("bin"));
-    }
 }
 
 fn install_from_bun(install_dir: &Path, env_vars: &[(String, String)]) -> Result<()> {
@@ -421,13 +371,41 @@ fn resolve_command_path(
             Ok("npx".to_string())
         }
         SourceMethod::Npm => {
+            // Prefer the locally installed shim under install_dir so we stay isolated and
+            // do not depend on (or override) any global OpenClaw installation.
+            let candidates = [
+                install_dir
+                    .join("node_modules")
+                    .join(".bin")
+                    .join("openclaw.cmd"),
+                install_dir
+                    .join("node_modules")
+                    .join(".bin")
+                    .join("openclaw"),
+                install_dir
+                    .join("node_modules")
+                    .join(".bin")
+                    .join("openclaw.ps1"),
+                install_dir.join("openclaw.exe"),
+            ];
+            for candidate in candidates {
+                if candidate.exists() {
+                    let text = candidate.to_string_lossy().to_string();
+                    if command_is_usable(&text) {
+                        return Ok(text);
+                    }
+                    logger::warn(&format!(
+                        "Detected unusable OpenClaw command candidate: {text}"
+                    ));
+                }
+            }
+
             if let Some(global) = resolve_global_openclaw() {
                 return Ok(global);
             }
             if let Some(local_home_cmd) = resolve_local_home_openclaw() {
                 return Ok(local_home_cmd);
             }
-            // npm official flow installs globally; if PATH is stale, npx is safer than stale local wrappers.
             Ok("npx".to_string())
         }
         SourceMethod::Bun => {
@@ -633,7 +611,8 @@ pub fn uninstall_openclaw() -> Result<UninstallResult> {
     }
 
     let install_state = state_store::load_install_state()?;
-    uninstall_global_package(install_state.as_ref(), &mut warnings);
+    // IMPORTANT: Never uninstall global OpenClaw automatically.
+    // Users may have their own global OpenClaw installation unrelated to this installer.
 
     let mut targets = HashSet::<String>::new();
     if let Some(state) = install_state.as_ref() {
@@ -665,53 +644,6 @@ pub fn uninstall_openclaw() -> Result<UninstallResult> {
         removed_paths,
         warnings,
     })
-}
-
-fn uninstall_global_package(install_state: Option<&InstallState>, warnings: &mut Vec<String>) {
-    let method = install_state
-        .map(|state| state.method.clone())
-        .unwrap_or(SourceMethod::Npm);
-    match method {
-        SourceMethod::Npm | SourceMethod::Git | SourceMethod::Binary => {
-            if let Some(npm) = shell::command_exists("npm") {
-                match shell::run_command(npm.as_str(), &["uninstall", "-g", "openclaw"], None, &[])
-                {
-                    Ok(out) if out.code == 0 => {
-                        logger::info("Removed global OpenClaw package from npm.");
-                    }
-                    Ok(out) => warnings.push(format!(
-                        "npm uninstall -g openclaw exited with code {}: {}",
-                        out.code,
-                        if out.stderr.is_empty() {
-                            out.stdout
-                        } else {
-                            out.stderr
-                        }
-                    )),
-                    Err(err) => warnings.push(format!("npm uninstall -g openclaw failed: {err}")),
-                }
-            }
-        }
-        SourceMethod::Bun => {
-            if let Some(bun) = shell::command_exists("bun") {
-                match shell::run_command(bun.as_str(), &["remove", "-g", "openclaw"], None, &[]) {
-                    Ok(out) if out.code == 0 => {
-                        logger::info("Removed global OpenClaw package from bun.");
-                    }
-                    Ok(out) => warnings.push(format!(
-                        "bun remove -g openclaw exited with code {}: {}",
-                        out.code,
-                        if out.stderr.is_empty() {
-                            out.stdout
-                        } else {
-                            out.stderr
-                        }
-                    )),
-                    Err(err) => warnings.push(format!("bun remove -g openclaw failed: {err}")),
-                }
-            }
-        }
-    }
 }
 
 fn remove_dir_best_effort(

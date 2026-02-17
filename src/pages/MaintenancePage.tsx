@@ -308,7 +308,7 @@ export function MaintenancePage({ lang, onStatusUpdate }: MaintenancePageProps) 
   };
 
   const managementUrl =
-    status?.port != null ? `http://127.0.0.1:${status.port}/` : "http://127.0.0.1:18789/";
+    status?.port != null ? `http://127.0.0.1:${status.port}/` : "http://127.0.0.1:28789/";
 
   const riskScore = useMemo(() => security?.score ?? 0, [security]);
 

@@ -25,3 +25,6 @@ source/OPENCLAW_SOURCE_LATEST.txt
 # Accidental local folders / screenshots (keep out of GitHub)
 ~/
 ae1b0bc5ade4cecfdb722e09d6148ec8.jpg
+
+# Local release artifacts (installer exe/msi copied for convenience)
+release/

@@ -163,7 +163,7 @@ pub async fn status() -> Result<InstallerStatus> {
         base_url: None,
         proxy: None,
         bind_address: "127.0.0.1".to_string(),
-        port: 18789,
+        port: 28789,
         install_dir: String::new(),
         launch_args: "gateway".to_string(),
         updated_at: String::new(),
@@ -296,6 +296,19 @@ fn build_process_command(command_path: &str, args: &[String]) -> Result<Command>
     if ext == "cmd" || ext == "bat" {
         let mut cmd = Command::new("cmd");
         cmd.arg("/D").arg("/C").arg(&exe);
+        for arg in &argv {
+            cmd.arg(arg);
+        }
+        return Ok(cmd);
+    }
+    if ext == "ps1" {
+        let mut cmd = Command::new("powershell");
+        cmd.arg("-NoProfile")
+            .arg("-NonInteractive")
+            .arg("-ExecutionPolicy")
+            .arg("Bypass")
+            .arg("-File")
+            .arg(&exe);
         for arg in &argv {
             cmd.arg(arg);
         }

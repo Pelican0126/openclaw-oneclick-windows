@@ -33,12 +33,12 @@
 - installer backups: `%APPDATA%\OpenClawInstaller\backups`
 - installer state: `%APPDATA%\OpenClawInstaller\state`
 - PID file: `%APPDATA%\OpenClawInstaller\run\openclaw.pid`
-- OpenClaw state/config: `%USERPROFILE%\.openclaw`
+- OpenClaw state/config: Wizard `install_dir` (default `%LOCALAPPDATA%\OpenClawInstaller\openclaw`)
 
 ## 5. Install/config strategy
-1. Install OpenClaw using official npm global flow:
-   - `npm install -g openclaw@latest`
-   - if global command is unavailable, fallback to `npx openclaw ...`
+1. Install OpenClaw locally (isolated, no global install/uninstall):
+   - `npm --prefix <install_dir> install openclaw@latest`
+   - fallback when local install is unavailable: use existing `openclaw` from PATH or `npx openclaw ...`
 2. Configure through official CLI onboarding:
    - `openclaw onboard --non-interactive ...`
 3. Apply model chain:

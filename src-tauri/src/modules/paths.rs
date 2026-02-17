@@ -39,13 +39,48 @@ pub fn openclaw_home() -> PathBuf {
             return PathBuf::from(trimmed);
         }
     }
-    dirs::home_dir()
-        .unwrap_or_else(env::temp_dir)
-        .join(".openclaw")
+    default_isolated_openclaw_home()
 }
 
 pub fn config_path() -> PathBuf {
     openclaw_home().join("openclaw.json")
+}
+
+pub fn default_isolated_openclaw_home() -> PathBuf {
+    // Default to an isolated per-user directory so the installer never
+    // touches an existing `%USERPROFILE%\\.openclaw` installation unless
+    // the user explicitly points to it via Wizard -> Install directory.
+    dirs::data_local_dir()
+        .or_else(dirs::data_dir)
+        .unwrap_or_else(env::temp_dir)
+        .join("OpenClawInstaller")
+        .join("openclaw")
+}
+
+pub fn is_user_profile_default_openclaw_dir(path: &std::path::Path) -> bool {
+    // This is the classic OpenClaw state directory on Windows. We must never
+    // use it for the installer-managed instance because it can overwrite a
+    // user's existing setup.
+    let Some(home) = dirs::home_dir() else {
+        return false;
+    };
+
+    let candidates = [
+        home.join(".openclaw"),
+        home.join(".clawdbot"),
+        home.join(".moldbot"),
+        home.join(".moltbot"),
+    ];
+
+    let normalize = |p: &std::path::Path| {
+        p.to_string_lossy()
+            .replace('/', "\\")
+            .trim_end_matches('\\')
+            .to_ascii_lowercase()
+    };
+
+    let needle = normalize(path);
+    candidates.iter().any(|candidate| needle == normalize(candidate))
 }
 
 pub fn ensure_dirs() -> Result<()> {

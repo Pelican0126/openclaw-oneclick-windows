@@ -1,6 +1,6 @@
 [package]
 name = "openclaw-installer"
-version = "0.1.0"
+version = "0.2.0"
 description = "OpenClaw installer and maintenance GUI for Windows"
 authors = ["OpenClaw Installer Team"]
 edition = "2021"

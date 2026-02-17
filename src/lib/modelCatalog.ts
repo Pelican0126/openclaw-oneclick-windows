@@ -22,9 +22,17 @@ export const FALLBACK_MODEL_CATALOG: ModelCatalogItem[] = [
   model("anthropic/claude-3-7-sonnet-latest", "Claude 3.7 Sonnet Latest"),
   model("google/gemini-2.5-pro", "Gemini 2.5 Pro"),
   model("google/gemini-2.5-flash", "Gemini 2.5 Flash"),
+  // Moonshot (Kimi) model refs are: moonshot/<modelId>.
+  // Keep this list aligned with upstream OpenClaw docs as a fallback when CLI catalog is slow/unavailable.
   model("moonshot/kimi-k2-0905-preview", "Kimi K2 0905 Preview"),
+  model("moonshot/kimi-k2-turbo-preview", "Kimi K2 Turbo"),
+  model("moonshot/kimi-k2-thinking", "Kimi K2 Thinking"),
+  model("moonshot/kimi-k2-thinking-turbo", "Kimi K2 Thinking Turbo"),
   model("moonshot/kimi-k2-250711", "Kimi K2 250711"),
-  model("moonshot/kimi-2.5", "Kimi k2.5"),
+  // OpenClaw uses `kimi-k2.5` (not `kimi-2.5`) as the Moonshot provider id.
+  model("moonshot/kimi-k2.5", "Kimi K2.5"),
+  // Kimi Coding is a separate provider (different endpoint + key): kimi-coding/<modelId>.
+  model("kimi-coding/k2p5", "Kimi K2.5 (Coding)"),
   model("xai/grok-4", "Grok 4"),
   model("xai/grok-3", "Grok 3"),
   model("openrouter/moonshotai/kimi-k2", "OpenRouter Kimi K2"),

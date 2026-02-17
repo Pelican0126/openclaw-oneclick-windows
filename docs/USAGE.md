@@ -64,7 +64,7 @@ Releases（安装包下载）/ Download: `https://github.com/Pelican0126/opencla
 
 两种方式：
 
-1. 在维护中心点击“删除 OpenClaw”（会停止 OpenClaw 并删除安装目录、`%USERPROFILE%\\.openclaw` 以及 `%APPDATA%\\OpenClawInstaller`）
+1. 在维护中心点击“删除 OpenClaw”（会停止 OpenClaw 并删除“安装目录”（向导里配置，默认 `%LOCALAPPDATA%\\OpenClawInstaller\\openclaw`）以及 `%APPDATA%\\OpenClawInstaller`）
 2. 在 Windows “应用和功能”中卸载 `OpenClaw Installer`
 
 ## 常见问题 / FAQ

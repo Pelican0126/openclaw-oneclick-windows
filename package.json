@@ -1,7 +1,7 @@
 {
   "name": "openclaw-installer",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -10,7 +10,7 @@
     "icons": "node scripts/run-tauri.cjs icon app-icon.png --output src-tauri/icons",
     "tauri": "node scripts/run-tauri.cjs",
     "tauri:dev": "node scripts/run-tauri.cjs dev",
-    "tauri:build": "node scripts/run-tauri.cjs build"
+    "tauri:build": "node scripts/run-tauri.cjs build && node scripts/copy-bundles.cjs"
   },
   "dependencies": {
     "@tauri-apps/api": "2.10.1",

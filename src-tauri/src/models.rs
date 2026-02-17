@@ -101,7 +101,8 @@ pub struct OpenClawConfigInput {
 impl Default for OpenClawConfigInput {
     fn default() -> Self {
         Self {
-            install_dir: "%USERPROFILE%\\.openclaw".to_string(),
+            // Isolated by default: do not touch an existing `%USERPROFILE%\\.openclaw`.
+            install_dir: "%LOCALAPPDATA%\\OpenClawInstaller\\openclaw".to_string(),
             provider: "openai".to_string(),
             model_chain: ModelChain {
                 primary: "openai/gpt-5.2".to_string(),
@@ -112,7 +113,8 @@ impl Default for OpenClawConfigInput {
             selected_skills: vec!["healthcheck".to_string(), "skill-creator".to_string()],
             base_url: None,
             proxy: None,
-            port: 18789,
+            // Use a non-default port so we don't collide with an existing OpenClaw gateway.
+            port: 28789,
             bind_address: "127.0.0.1".to_string(),
             source_method: SourceMethod::Npm,
             source_url: None,

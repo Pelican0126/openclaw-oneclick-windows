@@ -3,15 +3,15 @@
 ## 1. API key handling
 - Installer now initializes config through `openclaw onboard --non-interactive`.
 - OpenClaw stores provider keys/tokens in:
-  - `%USERPROFILE%\.openclaw\.env` (primary)
+  - `<install_dir>\.env` (primary, installer-managed; default `%LOCALAPPDATA%\OpenClawInstaller\openclaw\.env`)
 - Legacy installs may still have key-like fields in:
-  - `%USERPROFILE%\.openclaw\openclaw.json`
+  - `<install_dir>\openclaw.json`
 - UI warns that secrets are plaintext and should use least-privilege keys.
 
 ## 2. ACL hardening
 - `configure()` attempts to harden ACL for:
-  - `%USERPROFILE%\.openclaw\openclaw.json`
-  - `%USERPROFILE%\.openclaw\.env` (if present)
+  - `<install_dir>\openclaw.json`
+  - `<install_dir>\.env` (if present)
 - It runs:
   - `icacls /inheritance:r`
   - `icacls /grant:r <current-user>:(R,W)`
