@@ -159,17 +159,6 @@ fn parse_dashboard_url_from_output(output: &str) -> Option<String> {
     None
 }
 
-fn with_gateway_auth_fragment(url: Url) -> Result<Url> {
-    if has_auth_fragment(url.fragment()) {
-        return Ok(url);
-    }
-
-    let Some(token) = read_gateway_token_from_config()? else {
-        return Ok(url);
-    };
-    Ok(with_gateway_token_fragment(url, Some(token.as_str())))
-}
-
 fn read_gateway_token_from_config() -> Result<Option<String>> {
     let cfg_path = paths::config_path();
     if !cfg_path.exists() {

@@ -20,7 +20,7 @@ const TRAY_MENU_STOP_OPENCLAW_ID: &str = "tray_stop_openclaw";
 const TRAY_MENU_EXIT_ID: &str = "tray_exit";
 
 fn init_openclaw_home_override() {
-    // 1) Respect explicit overrides (e.g. smoke/dev scripts).
+    // 1) Respect explicit overrides (e.g. custom dev launch scripts).
     if let Ok(value) = std::env::var("OPENCLAW_INSTALLER_OPENCLAW_HOME") {
         if !value.trim().is_empty() {
             return;

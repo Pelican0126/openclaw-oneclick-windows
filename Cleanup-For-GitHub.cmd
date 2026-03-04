@@ -4,7 +4,7 @@ setlocal enabledelayedexpansion
 REM ======================================================
 REM OpenClaw Installer - Cleanup For GitHub Upload
 REM ======================================================
-REM This script deletes build outputs / caches / smoke artifacts
+REM This script deletes build outputs / caches / temp artifacts
 REM so you don't accidentally upload huge folders or local logs.
 REM
 REM It does NOT touch your Windows %USERPROFILE%\.openclaw.
@@ -31,16 +31,6 @@ if exist "dist" (
   rmdir /s /q "dist"
 )
 
-if exist ".smoke" (
-  echo   - .smoke
-  rmdir /s /q ".smoke"
-)
-
-if exist ".smoke-temp" (
-  echo   - .smoke-temp
-  rmdir /s /q ".smoke-temp"
-)
-
 if exist "%%TEMP%%" (
   echo   - %%TEMP%%
   rmdir /s /q "%%TEMP%%"
@@ -61,11 +51,6 @@ if exist "src-tauri\\target-alt" (
   rmdir /s /q "src-tauri\\target-alt"
 )
 
-if exist "src-tauri\\src-tauri\\target-smoke" (
-  echo   - src-tauri\\src-tauri\\target-smoke
-  rmdir /s /q "src-tauri\\src-tauri\\target-smoke"
-)
-
 echo.
 echo [cleanup] Removing local logs / screenshots (if present)...
 
@@ -81,4 +66,3 @@ echo   source\\openclaw-npm-*
 echo   (it is already ignored by .gitignore)
 echo.
 pause
-

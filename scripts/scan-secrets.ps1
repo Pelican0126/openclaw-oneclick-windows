@@ -12,13 +12,10 @@ function RgFiles([string]$Pattern, [string[]]$ExtraGlobs) {
     $globs = @(
       "-g", "!node_modules/**",
       "-g", "!dist/**",
-      "-g", "!.smoke/**",
-      "-g", "!.smoke-temp/**",
       "-g", "!%TEMP%/**",
       "-g", "!~/**",
       "-g", "!src-tauri/target/**",
-      "-g", "!src-tauri/target-alt/**",
-      "-g", "!src-tauri/src-tauri/target-smoke/**"
+      "-g", "!src-tauri/target-alt/**"
     )
     if ($SkipSource) {
       $globs += @("-g", "!source/**")
@@ -33,7 +30,7 @@ function RgFiles([string]$Pattern, [string[]]$ExtraGlobs) {
 
   Write-Host "[WARN] ripgrep (rg) not found, using slower PowerShell fallback scanner."
 
-  $excludeRegex = "\\node_modules\\|\\dist\\|\\.smoke\\|\\.smoke-temp\\|\\%TEMP%\\|\\~\\|\\src-tauri\\target\\|\\src-tauri\\target-alt\\|\\src-tauri\\src-tauri\\target-smoke\\"
+  $excludeRegex = "\\node_modules\\|\\dist\\|\\%TEMP%\\|\\~\\|\\src-tauri\\target\\|\\src-tauri\\target-alt\\"
   if ($SkipSource) {
     $excludeRegex = "$excludeRegex|\\source\\"
   }

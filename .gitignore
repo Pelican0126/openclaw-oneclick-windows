@@ -2,15 +2,12 @@ node_modules/
 dist/
 src-tauri/target/
 src-tauri/target-alt/
-src-tauri/src-tauri/target-smoke/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
-# Local smoke-test / probe artifacts (may contain tokens, logs, temp workspaces)
-.smoke/
-.smoke-temp/
+# Local temp/cache artifacts
 %TEMP%/
 
 # Local launcher logs
