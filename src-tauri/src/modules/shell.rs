@@ -281,10 +281,7 @@ mod tests {
         let exe = script.to_string_lossy().to_string();
         let out = run_command(exe.as_str(), &["arg"], None, &[]).expect("invoke test ps1 script");
         assert_eq!(out.code, 0, "stdout={}, stderr={}", out.stdout, out.stderr);
-        assert!(out
-            .stdout
-            .to_ascii_lowercase()
-            .contains("hello_from_ps1"));
+        assert!(out.stdout.to_ascii_lowercase().contains("hello_from_ps1"));
 
         let _ = fs::remove_file(script);
     }

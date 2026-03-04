@@ -10,7 +10,7 @@ use uuid::Uuid;
 
 use crate::models::{ConfigureResult, ModelChain, OpenClawConfigInput, OpenClawFileConfig};
 
-use super::{logger, paths, shell, state_store};
+use super::{logger, model_identity, paths, shell, state_store};
 
 const AUTH_MAPPED_PROVIDERS: &[&str] = &[
     "openai",
@@ -34,12 +34,13 @@ pub fn configure(payload: &OpenClawConfigInput) -> Result<ConfigureResult> {
     // Normalize known legacy model ids so old configs don't keep breaking new installs.
     // (Example: "moonshot/kimi-2.5" -> "moonshot/kimi-k2.5")
     let mut payload = payload.clone();
-    payload.model_chain.primary = normalize_known_model_key(payload.model_chain.primary.as_str());
+    payload.model_chain.primary =
+        model_identity::normalize_known_model_key(payload.model_chain.primary.as_str());
     payload.model_chain.fallbacks = payload
         .model_chain
         .fallbacks
         .iter()
-        .map(|item| normalize_known_model_key(item))
+        .map(|item| model_identity::normalize_known_model_key(item))
         .filter(|item| !item.trim().is_empty())
         .collect();
     // Bind all OpenClaw state/config writes to the chosen install directory so we never
@@ -91,14 +92,14 @@ pub fn switch_model(primary: &str, fallbacks: &[String]) -> Result<ConfigureResu
     if primary.trim().is_empty() {
         return Err(anyhow!("Primary model cannot be empty"));
     }
-    let primary = normalize_known_model_key(primary);
+    let primary = model_identity::normalize_known_model_key(primary);
     let mut warnings = Vec::<String>::new();
     apply_model_chain(
         &ModelChain {
             primary: primary.clone(),
             fallbacks: normalize_fallbacks(fallbacks)
                 .into_iter()
-                .map(|item| normalize_known_model_key(item.as_str()))
+                .map(|item| model_identity::normalize_known_model_key(item.as_str()))
                 .filter(|item| !item.trim().is_empty())
                 .collect(),
         },
@@ -108,10 +109,10 @@ pub fn switch_model(primary: &str, fallbacks: &[String]) -> Result<ConfigureResu
         last.model_chain.primary = primary.clone();
         last.model_chain.fallbacks = normalize_fallbacks(fallbacks)
             .into_iter()
-            .map(|item| normalize_known_model_key(item.as_str()))
+            .map(|item| model_identity::normalize_known_model_key(item.as_str()))
             .filter(|item| !item.trim().is_empty())
             .collect();
-        if let Some(provider) = provider_from_model_key(primary.as_str()) {
+        if let Some(provider) = model_identity::provider_from_model_key(primary.as_str()) {
             last.provider = provider.to_string();
         }
         state_store::save_last_config(&last)?;
@@ -124,8 +125,8 @@ pub fn switch_model(primary: &str, fallbacks: &[String]) -> Result<ConfigureResu
 }
 
 pub fn update_provider_api_key(provider: &str, api_key: &str) -> Result<String> {
-    let provider_id = normalize_auth_provider(provider);
-    let Some(env_name) = provider_env_name(provider_id.as_str()) else {
+    let provider_id = model_identity::normalize_auth_provider(provider);
+    let Some(env_name) = model_identity::provider_env_name(provider_id.as_str()) else {
         return Err(anyhow!(
             "Provider '{}' cannot be converted to a valid API key environment variable.",
             provider
@@ -144,12 +145,12 @@ pub fn update_provider_api_key(provider: &str, api_key: &str) -> Result<String> 
         if let Some(value) = optional_non_empty(Some(api_key.to_string())) {
             last.provider_api_keys
                 .insert(provider_id.clone(), value.clone());
-            if normalize_auth_provider(last.provider.as_str()) == provider_id {
+            if model_identity::normalize_auth_provider(last.provider.as_str()) == provider_id {
                 last.api_key = value;
             }
         } else {
             last.provider_api_keys.remove(provider_id.as_str());
-            if normalize_auth_provider(last.provider.as_str()) == provider_id {
+            if model_identity::normalize_auth_provider(last.provider.as_str()) == provider_id {
                 last.api_key.clear();
             }
         }
@@ -201,14 +202,14 @@ pub fn read_current_config() -> Result<OpenClawFileConfig> {
         })
         .unwrap_or_else(|| last.model_chain.fallbacks.clone());
 
-    let primary = normalize_known_model_key(primary.as_str());
+    let primary = model_identity::normalize_known_model_key(primary.as_str());
     let fallbacks = fallbacks
         .into_iter()
-        .map(|item| normalize_known_model_key(item.as_str()))
+        .map(|item| model_identity::normalize_known_model_key(item.as_str()))
         .filter(|item| !item.trim().is_empty())
         .collect::<Vec<_>>();
 
-    let provider = provider_from_model_key(&primary)
+    let provider = model_identity::provider_from_model_key(&primary)
         .map(|s| s.to_string())
         .unwrap_or_else(|| last.provider.clone());
 
@@ -238,9 +239,12 @@ pub fn read_current_config() -> Result<OpenClawFileConfig> {
     } else {
         provider.clone()
     };
-    let primary_api_key = provider_key_for_id(&last, normalize_auth_provider(&provider).as_str())
-        .or_else(|| optional_non_empty(Some(last.api_key.clone())))
-        .unwrap_or_default();
+    let primary_api_key = provider_key_for_id(
+        &last,
+        model_identity::normalize_auth_provider(&provider).as_str(),
+    )
+    .or_else(|| optional_non_empty(Some(last.api_key.clone())))
+    .unwrap_or_default();
 
     let updated_at = json
         .pointer("/meta/lastTouchedAt")
@@ -357,7 +361,7 @@ fn run_onboard(payload: &OpenClawConfigInput, warnings: &mut Vec<String>) -> Res
     }
 
     let provider = resolve_provider(payload)?;
-    let auth_provider = normalize_auth_provider(&provider);
+    let auth_provider = model_identity::normalize_auth_provider(&provider);
     let primary_key = provider_key_for_payload(payload, auth_provider.as_str())
         .or_else(|| optional_non_empty(Some(payload.api_key.clone())));
     if primary_key.is_none() {
@@ -500,16 +504,12 @@ fn run_onboard(payload: &OpenClawConfigInput, warnings: &mut Vec<String>) -> Res
 }
 
 fn apply_model_chain(model_chain: &ModelChain, warnings: &mut Vec<String>) -> Result<()> {
-    let primary = normalize_known_model_key(model_chain.primary.as_str());
+    let primary = model_identity::normalize_known_model_key(model_chain.primary.as_str());
     if primary.trim().is_empty() {
         return Err(anyhow!("Primary model is required."));
     }
     let set_out = run_openclaw_cli(
-        &[
-            "models".to_string(),
-            "set".to_string(),
-            primary.clone(),
-        ],
+        &["models".to_string(), "set".to_string(), primary.clone()],
         None,
     )?;
     shell::ensure_success("openclaw models set", &set_out)?;
@@ -525,7 +525,7 @@ fn apply_model_chain(model_chain: &ModelChain, warnings: &mut Vec<String>) -> Re
     shell::ensure_success("openclaw models fallbacks clear", &clear_out)?;
 
     for fallback in normalize_fallbacks(&model_chain.fallbacks) {
-        let fallback = normalize_known_model_key(fallback.as_str());
+        let fallback = model_identity::normalize_known_model_key(fallback.as_str());
         if fallback == primary {
             continue;
         }
@@ -615,8 +615,8 @@ fn apply_provider_keys(payload: &OpenClawConfigInput, warnings: &mut Vec<String>
         let Some(key_value) = optional_non_empty(Some(value.clone())) else {
             continue;
         };
-        let normalized = normalize_auth_provider(provider);
-        if let Some(env_name) = provider_env_name(normalized.as_str()) {
+        let normalized = model_identity::normalize_auth_provider(provider);
+        if let Some(env_name) = model_identity::provider_env_name(normalized.as_str()) {
             env_values.insert(env_name, sanitize_env_value(&key_value));
         } else {
             unmapped.insert(provider.to_string());
@@ -626,8 +626,8 @@ fn apply_provider_keys(payload: &OpenClawConfigInput, warnings: &mut Vec<String>
     // Backward compatibility: if legacy single API key is set, keep binding it to primary provider.
     if let Some(key_value) = optional_non_empty(Some(payload.api_key.clone())) {
         if let Ok(primary_provider) = resolve_provider(payload) {
-            let normalized = normalize_auth_provider(primary_provider.as_str());
-            if let Some(env_name) = provider_env_name(normalized.as_str()) {
+            let normalized = model_identity::normalize_auth_provider(primary_provider.as_str());
+            if let Some(env_name) = model_identity::provider_env_name(normalized.as_str()) {
                 env_values
                     .entry(env_name)
                     .or_insert_with(|| sanitize_env_value(&key_value));
@@ -642,7 +642,7 @@ fn apply_provider_keys(payload: &OpenClawConfigInput, warnings: &mut Vec<String>
         if provider_key_for_payload(payload, provider.as_str()).is_some() {
             continue;
         }
-        if provider_env_name(provider.as_str()).is_some() {
+        if model_identity::provider_env_name(provider.as_str()).is_some() {
             warnings.push(format!(
                 "No API key configured for provider '{}' in model chain; fallback calls to this provider may fail.",
                 provider
@@ -1413,7 +1413,7 @@ fn set_windows_acl(path: &Path) -> Vec<String> {
 }
 
 fn resolve_provider(payload: &OpenClawConfigInput) -> Result<String> {
-    if let Some(provider) = provider_from_model_key(&payload.model_chain.primary) {
+    if let Some(provider) = model_identity::provider_from_model_key(&payload.model_chain.primary) {
         return Ok(provider.to_string());
     }
     let provider = payload.provider.trim();
@@ -1423,40 +1423,8 @@ fn resolve_provider(payload: &OpenClawConfigInput) -> Result<String> {
     Ok(provider.to_string())
 }
 
-fn provider_from_model_key(model: &str) -> Option<&str> {
-    let (provider, model_name) = model.split_once('/')?;
-    if provider.trim().is_empty() || model_name.trim().is_empty() {
-        return None;
-    }
-    Some(provider.trim())
-}
-
-fn normalize_known_model_key(raw: &str) -> String {
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return String::new();
-    }
-    // Backward compatibility: older UI/builds used the wrong Kimi 2.5 id.
-    // OpenClaw uses `kimi-k2.5`.
-    let lowered = trimmed.to_ascii_lowercase();
-    if lowered == "moonshot/kimi-2.5" || lowered == "moonshot/kimi2.5" {
-        return "moonshot/kimi-k2.5".to_string();
-    }
-    trimmed.to_string()
-}
-
-fn normalize_auth_provider(provider: &str) -> String {
-    match provider.trim().to_ascii_lowercase().as_str() {
-        // `openai-codex/*` models still authenticate with OpenAI API key.
-        "openai-codex" => "openai".to_string(),
-        // Keep kimi coding provider id stable across aliases.
-        "kimi-code" => "kimi-coding".to_string(),
-        other => other.to_string(),
-    }
-}
-
 fn provider_key_for_payload(payload: &OpenClawConfigInput, provider: &str) -> Option<String> {
-    let normalized = normalize_auth_provider(provider);
+    let normalized = model_identity::normalize_auth_provider(provider);
     let direct = payload
         .provider_api_keys
         .get(normalized.as_str())
@@ -1487,50 +1455,14 @@ fn provider_key_for_id(payload: &OpenClawConfigInput, provider_id: &str) -> Opti
     provider_key_for_payload(payload, provider_id)
 }
 
-fn provider_env_name(provider: &str) -> Option<String> {
-    match normalize_auth_provider(provider).as_str() {
-        "openai" => Some("OPENAI_API_KEY".to_string()),
-        "google" => Some("GEMINI_API_KEY".to_string()),
-        "moonshot" => Some("MOONSHOT_API_KEY".to_string()),
-        "kimi-coding" => Some("KIMI_API_KEY".to_string()),
-        "xai" => Some("XAI_API_KEY".to_string()),
-        "anthropic" => Some("ANTHROPIC_API_KEY".to_string()),
-        "openrouter" => Some("OPENROUTER_API_KEY".to_string()),
-        "azure" => Some("AZURE_OPENAI_API_KEY".to_string()),
-        "zai" => Some("ZAI_API_KEY".to_string()),
-        "xiaomi" => Some("XIAOMI_API_KEY".to_string()),
-        "minimax" => Some("MINIMAX_API_KEY".to_string()),
-        other => generic_provider_env_name(other),
-    }
-}
-
-fn generic_provider_env_name(provider: &str) -> Option<String> {
-    let normalized = provider
-        .chars()
-        .map(|ch| {
-            if ch.is_ascii_alphanumeric() {
-                ch.to_ascii_uppercase()
-            } else {
-                '_'
-            }
-        })
-        .collect::<String>()
-        .trim_matches('_')
-        .to_string();
-    if normalized.is_empty() {
-        return None;
-    }
-    Some(format!("{normalized}_API_KEY"))
-}
-
 fn providers_from_model_chain(model_chain: &ModelChain) -> Vec<String> {
     let mut providers = HashSet::<String>::new();
-    if let Some(provider) = provider_from_model_key(&model_chain.primary) {
-        providers.insert(normalize_auth_provider(provider));
+    if let Some(provider) = model_identity::provider_from_model_key(&model_chain.primary) {
+        providers.insert(model_identity::normalize_auth_provider(provider));
     }
     for fallback in &model_chain.fallbacks {
-        if let Some(provider) = provider_from_model_key(fallback) {
-            providers.insert(normalize_auth_provider(provider));
+        if let Some(provider) = model_identity::provider_from_model_key(fallback) {
+            providers.insert(model_identity::normalize_auth_provider(provider));
         }
     }
     let mut out = providers.into_iter().collect::<Vec<_>>();

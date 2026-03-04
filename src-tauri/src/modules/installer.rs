@@ -153,7 +153,7 @@ fn install_from_npm(install_dir: &Path, env_vars: &[(String, String)]) -> Result
     }
     if is_npm_git_fetch_failure(&out) {
         return Err(anyhow!(
-            "npm install openclaw@latest (local) failed after mirror retries. Git dependencies from GitHub are unreachable or unauthorized in current network. Configure a working HTTP(S) proxy in Wizard -> Advanced, or allow access to github.com / gitclone.com / gh.llkk.cc. Last error: {}",
+            "npm install openclaw@latest (local) failed after registry+mirror retries. Git dependencies from GitHub are unreachable or unauthorized in current network. Configure a working HTTP(S) proxy in Wizard -> Advanced, or allow access to github.com / gitclone.com / gh.llkk.cc and npm registry mirrors. Last error: {}",
             if out.stderr.is_empty() {
                 out.stdout.clone()
             } else {
@@ -211,20 +211,37 @@ struct NpmInstallAttempt {
 
 fn npm_install_attempts(base_env: &[(String, String)]) -> Vec<NpmInstallAttempt> {
     let mut attempts = Vec::new();
-    attempts.push(NpmInstallAttempt {
-        label: "direct-github".to_string(),
-        env: npm_git_env(base_env),
-    });
-    for mirror in [
-        "https://gitclone.com/github.com/",
-        "https://gh.llkk.cc/https://github.com/",
+    for (registry_label, registry) in [
+        ("default-registry", ""),
+        ("npmmirror", "https://registry.npmmirror.com"),
     ] {
+        let env_with_registry = npm_env_with_registry(base_env, registry);
         attempts.push(NpmInstallAttempt {
-            label: format!("mirror:{mirror}"),
-            env: npm_git_env_with_mirror(base_env, mirror),
+            label: format!("{registry_label}+direct-github"),
+            env: npm_git_env(&env_with_registry),
         });
+
+        for mirror in [
+            "https://gitclone.com/github.com/",
+            "https://gh.llkk.cc/https://github.com/",
+        ] {
+            attempts.push(NpmInstallAttempt {
+                label: format!("{registry_label}+mirror:{mirror}"),
+                env: npm_git_env_with_mirror(&env_with_registry, mirror),
+            });
+        }
     }
     attempts
+}
+
+fn npm_env_with_registry(base: &[(String, String)], registry: &str) -> Vec<(String, String)> {
+    let mut out = base.to_vec();
+    let value = registry.trim();
+    if !value.is_empty() {
+        out.push(("NPM_CONFIG_REGISTRY".to_string(), value.to_string()));
+        out.push(("npm_config_registry".to_string(), value.to_string()));
+    }
+    out
 }
 
 fn install_from_bun(install_dir: &Path, env_vars: &[(String, String)]) -> Result<()> {

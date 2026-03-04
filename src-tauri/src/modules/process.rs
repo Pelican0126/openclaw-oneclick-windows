@@ -11,7 +11,7 @@ use anyhow::{anyhow, Result};
 
 use crate::models::{HealthResult, InstallerStatus, OpenClawFileConfig, ProcessControlResult};
 
-use super::{config, health, logger, paths, shell, state_store};
+use super::{config, health, logger, model_identity, paths, shell, state_store};
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
@@ -76,15 +76,42 @@ pub fn start() -> Result<ProcessControlResult> {
         Ok(cmd.spawn()?)
     };
 
-    // Some job configurations disallow breakaway. Retry without breakaway if needed.
-    let child = spawn_with_flags(DETACHED_PROCESS | CREATE_NO_WINDOW | CREATE_BREAKAWAY_FROM_JOB)
-        .or_else(|err| {
-        logger::warn(&format!(
-            "OpenClaw spawn with breakaway failed, retrying without breakaway: {err}"
-        ));
-        spawn_with_flags(DETACHED_PROCESS | CREATE_NO_WINDOW)
-    })?;
-    let pid = child.id();
+    // Some job configurations disallow breakaway. In that case, prefer a detached
+    // PowerShell launcher so OpenClaw can survive parent terminal exits.
+    let pid =
+        match spawn_with_flags(DETACHED_PROCESS | CREATE_NO_WINDOW | CREATE_BREAKAWAY_FROM_JOB) {
+            Ok(child) => child.id(),
+            Err(err) => {
+                logger::warn(&format!(
+                    "OpenClaw spawn with breakaway failed, trying detached launcher: {err}"
+                ));
+
+                #[cfg(windows)]
+                {
+                    match launch_detached_via_powershell(
+                        &runtime_command,
+                        &args,
+                        &install.install_dir,
+                        &cfg,
+                    ) {
+                        Ok(pid) => pid,
+                        Err(launcher_err) => {
+                            logger::warn(&format!(
+                            "Detached launcher failed, retrying without breakaway: {launcher_err}"
+                        ));
+                            let child = spawn_with_flags(DETACHED_PROCESS | CREATE_NO_WINDOW)?;
+                            child.id()
+                        }
+                    }
+                }
+
+                #[cfg(not(windows))]
+                {
+                    let child = spawn_with_flags(DETACHED_PROCESS | CREATE_NO_WINDOW)?;
+                    child.id()
+                }
+            }
+        };
     write_pid(pid)?;
     // User intention: once started, keep it running unless explicitly ended via Maintenance.
     let _ = state_store::set_keep_running(true);
@@ -277,7 +304,10 @@ fn build_gateway_args(cfg: &OpenClawFileConfig) -> Vec<String> {
     args
 }
 
-fn build_process_command(command_path: &str, args: &[String]) -> Result<Command> {
+fn resolve_process_command_spec(
+    command_path: &str,
+    args: &[String],
+) -> Result<(String, Vec<String>)> {
     let (exe, argv) = if command_path.eq_ignore_ascii_case("npx") {
         let npx_exe = shell::command_exists("npx")
             .ok_or_else(|| anyhow!("npx not found. Please install Node.js first."))?;
@@ -294,32 +324,113 @@ fn build_process_command(command_path: &str, args: &[String]) -> Result<Command>
         .map(|v| v.to_string_lossy().to_ascii_lowercase())
         .unwrap_or_default();
     if ext == "cmd" || ext == "bat" {
-        let mut cmd = Command::new("cmd");
-        cmd.arg("/D").arg("/C").arg(&exe);
+        let mut out = vec!["/D".to_string(), "/C".to_string(), exe.clone()];
         for arg in &argv {
-            cmd.arg(arg);
+            out.push(arg.clone());
         }
-        return Ok(cmd);
+        return Ok(("cmd".to_string(), out));
     }
     if ext == "ps1" {
-        let mut cmd = Command::new("powershell");
-        cmd.arg("-NoProfile")
-            .arg("-NonInteractive")
-            .arg("-ExecutionPolicy")
-            .arg("Bypass")
-            .arg("-File")
-            .arg(&exe);
+        let mut out = vec![
+            "-NoProfile".to_string(),
+            "-NonInteractive".to_string(),
+            "-ExecutionPolicy".to_string(),
+            "Bypass".to_string(),
+            "-File".to_string(),
+            exe.clone(),
+        ];
         for arg in &argv {
-            cmd.arg(arg);
+            out.push(arg.clone());
         }
-        return Ok(cmd);
+        return Ok(("powershell".to_string(), out));
     }
+
+    Ok((exe, argv))
+}
+
+fn build_process_command(command_path: &str, args: &[String]) -> Result<Command> {
+    let (exe, argv) = resolve_process_command_spec(command_path, args)?;
 
     let mut cmd = Command::new(&exe);
     for arg in &argv {
         cmd.arg(arg);
     }
     Ok(cmd)
+}
+
+#[cfg(windows)]
+fn powershell_single_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
+}
+
+#[cfg(windows)]
+fn launch_detached_via_powershell(
+    command_path: &str,
+    args: &[String],
+    install_dir: &str,
+    cfg: &OpenClawFileConfig,
+) -> Result<u32> {
+    let (exe, argv) = resolve_process_command_spec(command_path, args)?;
+
+    let mut script_parts = vec!["$ErrorActionPreference='Stop'".to_string()];
+    for (key, value) in runtime_env(cfg) {
+        script_parts.push(format!(
+            "$env:{}={}",
+            key,
+            powershell_single_quote(value.as_str())
+        ));
+    }
+
+    let arg_list = if argv.is_empty() {
+        String::new()
+    } else {
+        format!(
+            " -ArgumentList @({})",
+            argv.iter()
+                .map(|arg| powershell_single_quote(arg.as_str()))
+                .collect::<Vec<_>>()
+                .join(",")
+        )
+    };
+    script_parts.push(format!(
+        "$p=Start-Process -FilePath {}{} -WorkingDirectory {} -WindowStyle Hidden -PassThru",
+        powershell_single_quote(exe.as_str()),
+        arg_list,
+        powershell_single_quote(install_dir)
+    ));
+    script_parts.push("$p.Id".to_string());
+    let script = script_parts.join(";");
+
+    let out = shell::run_command(
+        "powershell",
+        &[
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            script.as_str(),
+        ],
+        None,
+        &[],
+    )?;
+    if out.code != 0 {
+        return Err(anyhow!(
+            "Detached launcher failed: {}",
+            if out.stderr.trim().is_empty() {
+                out.stdout.trim().to_string()
+            } else {
+                out.stderr.trim().to_string()
+            }
+        ));
+    }
+
+    let pid = out
+        .stdout
+        .lines()
+        .find_map(|line| line.trim().parse::<u32>().ok())
+        .ok_or_else(|| anyhow!("Detached launcher did not return child PID"))?;
+    Ok(pid)
 }
 
 fn runtime_env(cfg: &OpenClawFileConfig) -> Vec<(String, String)> {
@@ -347,14 +458,14 @@ fn runtime_env(cfg: &OpenClawFileConfig) -> Vec<(String, String)> {
             if value.is_empty() {
                 continue;
             }
-            if let Some(name) = provider_env_name(provider.as_str()) {
+            if let Some(name) = model_identity::provider_env_name(provider.as_str()) {
                 provider_env.insert(name, value.to_string());
             }
         }
     }
     // Backward compatibility for old single-key payloads.
     if !cfg.api_key.trim().is_empty() {
-        if let Some(name) = provider_env_name(cfg.provider.as_str()) {
+        if let Some(name) = model_identity::provider_env_name(cfg.provider.as_str()) {
             provider_env
                 .entry(name)
                 .or_insert_with(|| cfg.api_key.clone());
@@ -393,50 +504,6 @@ fn detect_global_version() -> Option<String> {
 
 fn parse_args(raw: &str) -> Vec<String> {
     raw.split_whitespace().map(|s| s.to_string()).collect()
-}
-
-fn provider_env_name(provider: &str) -> Option<String> {
-    let normalized = provider.trim().to_ascii_lowercase();
-    let id = if normalized == "openai-codex" {
-        "openai"
-    } else if normalized == "kimi-code" {
-        "kimi-coding"
-    } else {
-        normalized.as_str()
-    };
-    match id {
-        "openai" => Some("OPENAI_API_KEY".to_string()),
-        "google" => Some("GEMINI_API_KEY".to_string()),
-        "moonshot" => Some("MOONSHOT_API_KEY".to_string()),
-        "kimi-coding" => Some("KIMI_API_KEY".to_string()),
-        "xai" => Some("XAI_API_KEY".to_string()),
-        "anthropic" => Some("ANTHROPIC_API_KEY".to_string()),
-        "openrouter" => Some("OPENROUTER_API_KEY".to_string()),
-        "azure" => Some("AZURE_OPENAI_API_KEY".to_string()),
-        "zai" => Some("ZAI_API_KEY".to_string()),
-        "xiaomi" => Some("XIAOMI_API_KEY".to_string()),
-        "minimax" => Some("MINIMAX_API_KEY".to_string()),
-        other => generic_provider_env_name(other),
-    }
-}
-
-fn generic_provider_env_name(provider: &str) -> Option<String> {
-    let normalized = provider
-        .chars()
-        .map(|ch| {
-            if ch.is_ascii_alphanumeric() {
-                ch.to_ascii_uppercase()
-            } else {
-                '_'
-            }
-        })
-        .collect::<String>()
-        .trim_matches('_')
-        .to_string();
-    if normalized.is_empty() {
-        return None;
-    }
-    Some(format!("{normalized}_API_KEY"))
 }
 
 fn resolve_runtime_command(preferred: &str) -> Result<String> {

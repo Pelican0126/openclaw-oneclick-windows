@@ -2,7 +2,7 @@ use anyhow::{anyhow, Result};
 
 use crate::models::UpgradeResult;
 
-use super::{backup, config, installer, logger, state_store};
+use super::{backup, config, installer, logger, model_catalog, state_store};
 
 pub async fn upgrade() -> Result<UpgradeResult> {
     let install_state = state_store::load_install_state()?
@@ -47,6 +47,7 @@ pub async fn upgrade() -> Result<UpgradeResult> {
 
     match installer::install_openclaw_for_upgrade(&payload).await {
         Ok(result) => {
+            model_catalog::clear_model_catalog_cache();
             logger::info(&format!(
                 "Upgrade completed from {} to {}",
                 old_version, result.version

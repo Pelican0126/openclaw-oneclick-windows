@@ -23,6 +23,8 @@ npm run tauri:build
 
 - `release/OpenClawInstaller-v{version}-setup.exe`
 - `release/OpenClawInstaller-v{version}.msi`
+- `release/OpenClawInstaller-v{version}-windows.zip`
+- `release/SHA256SUMS.txt`
 
 ## 设置 App 图标（Windows）/ App Icon (Windows)
 

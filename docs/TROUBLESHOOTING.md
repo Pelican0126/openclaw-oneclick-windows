@@ -52,10 +52,12 @@ Meaning:
 - Typical causes: blocked `github.com:443`, corporate proxy/firewall, or SSH auth mismatch.
 
 Current status:
-- Installer now auto-retries npm install with three routes:
-  - direct GitHub rewrite
-  - mirror rewrite to `https://gitclone.com/github.com/`
-  - mirror rewrite to `https://gh.llkk.cc/https://github.com/`
+- Installer now auto-retries npm install with registry + mirror routes:
+  - default npm registry + direct GitHub rewrite
+  - `https://registry.npmmirror.com` + direct GitHub rewrite
+  - both registry routes with GitHub mirrors:
+    - `https://gitclone.com/github.com/`
+    - `https://gh.llkk.cc/https://github.com/`
 
 If it still fails:
 1. Fill `HTTP(S) Proxy` in Wizard -> Advanced.

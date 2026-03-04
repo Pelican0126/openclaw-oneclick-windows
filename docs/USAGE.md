@@ -4,17 +4,18 @@ Releases（安装包下载）/ Download: `https://github.com/Pelican0126/opencla
 
 ## 下载 / Download
 
-- Releases（安装包下载）：`https://github.com/Pelican0126/openclaw-oneclick-windows/releases`
-- 建议优先下载：
-  - `OpenClaw Installer_*_x64-setup.exe`（NSIS 安装包，最通用）
-  - 或 `OpenClaw Installer_*_x64_zh-CN.msi`（MSI 安装包）
+- 推荐包（可发国内网盘）：`OpenClawInstaller-v1.0.0-windows.zip`
+- 备用单文件安装包：
+  - `OpenClawInstaller-v1.0.0-setup.exe`（推荐，最通用）
+  - `OpenClawInstaller-v1.0.0.msi`
 
 ## 安装与首次运行（Windows）/ Install & First Run (Windows)
 
 ### 1) 安装本程序 / Install this app
 
-1. 双击运行安装包（`.exe` 或 `.msi`）
-2. 安装完成后，从桌面快捷方式或开始菜单启动 `OpenClaw Installer`
+1. 下载 `OpenClawInstaller-v1.0.0-windows.zip`
+2. 解压后双击 `INSTALL_NOW.cmd`（或直接双击 `.exe/.msi`）
+3. 安装完成后，从桌面快捷方式或开始菜单启动 `OpenClaw Installer`
 
 说明：
 - 本程序关闭窗口默认不会退出，而是隐藏到 Windows 右下角系统托盘（Tray）

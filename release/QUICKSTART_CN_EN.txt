@@ -1,0 +1,19 @@
+OpenClaw Installer v1.0.0 - Quick Start
+
+[中文]
+1) 下载并解压 OpenClawInstaller-v*-windows.zip。
+2) 双击 INSTALL_NOW.cmd（或双击 .exe/.msi 安装包）。
+3) 安装后打开 OpenClaw Installer，按向导一直点下一步。
+
+提示：
+- 关闭窗口默认是最小化到托盘，不是退出。
+- 如果模型列表加载慢，可先用预置模型选项安装。
+
+[English]
+1) Download and extract OpenClawInstaller-v*-windows.zip.
+2) Double-click INSTALL_NOW.cmd (or run the .exe/.msi installer directly).
+3) Open OpenClaw Installer and complete the wizard step by step.
+
+Notes:
+- Closing window minimizes to tray; it does not fully exit.
+- If model list is slow, use preset model options first.

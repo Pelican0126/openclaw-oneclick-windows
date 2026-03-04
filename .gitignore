@@ -26,5 +26,8 @@ source/OPENCLAW_SOURCE_LATEST.txt
 ~/
 ae1b0bc5ade4cecfdb722e09d6148ec8.jpg
 
-# Local release artifacts (installer exe/msi copied for convenience)
-release/
+# Local release binaries (keep docs/templates in repo, ignore large artifacts)
+release/*.exe
+release/*.msi
+release/*.zip
+release/_stage-v*/

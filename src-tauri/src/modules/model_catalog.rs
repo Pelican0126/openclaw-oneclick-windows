@@ -1,16 +1,17 @@
 use std::collections::{BTreeMap, HashSet};
+use std::fs;
 use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, Result};
 use once_cell::sync::Lazy;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Deserializer, Value};
 use std::sync::{mpsc, Mutex};
 use std::thread;
 
 use crate::models::ModelCatalogItem;
 
-use super::{logger, paths, shell, state_store};
+use super::{logger, model_identity, paths, shell, state_store};
 
 #[derive(Debug, Deserialize)]
 struct ModelsListPayload {
@@ -30,10 +31,19 @@ struct ModelsListEntry {
 }
 
 const MODEL_CATALOG_CACHE_TTL: Duration = Duration::from_secs(45);
+const MODEL_CATALOG_DISK_CACHE_TTL: Duration = Duration::from_secs(60 * 60 * 24 * 7);
+const MODEL_CATALOG_MIN_ACCEPTABLE_COUNT: usize = 50;
 // First load can be slow on Windows when OpenClaw CLI needs to initialize
 // (or when `npx` needs to warm up). Keep a generous timeout so the UI can
 // show a loader instead of permanently falling back to a tiny built-in list.
-const MODEL_CATALOG_CLI_TIMEOUT: Duration = Duration::from_millis(8_000);
+const MODEL_CATALOG_CLI_TIMEOUT: Duration = Duration::from_millis(12_000);
+const MODEL_CATALOG_CLI_COLD_TIMEOUT: Duration = Duration::from_millis(25_000);
+
+#[derive(Debug, Serialize, Deserialize)]
+struct ModelCatalogDiskCache {
+    saved_at_unix_ms: u128,
+    items: Vec<ModelCatalogItem>,
+}
 
 #[derive(Clone)]
 struct ModelCatalogCache {
@@ -43,27 +53,53 @@ struct ModelCatalogCache {
 
 static MODEL_CATALOG_CACHE: Lazy<Mutex<Option<ModelCatalogCache>>> = Lazy::new(|| Mutex::new(None));
 
+pub fn clear_model_catalog_cache() {
+    if let Ok(mut guard) = MODEL_CATALOG_CACHE.lock() {
+        *guard = None;
+    }
+    let _ = fs::remove_file(model_catalog_cache_path());
+}
+
 pub fn list_model_catalog() -> Result<Vec<ModelCatalogItem>> {
     // Ensure the isolated OpenClaw home/config directories exist before invoking CLI.
     // This keeps `openclaw models list` stable and avoids touching a user's existing ~/.openclaw.
     let _ = paths::ensure_dirs();
+    let config_items = list_from_config_json();
     if let Some(items) = load_cached_catalog() {
-        return Ok(items);
+        // Always merge current config so newly switched models appear immediately,
+        // even while the CLI catalog cache is still warm.
+        return Ok(merge_catalog_sources(&[items, config_items]));
+    }
+    if let Some(items) = load_disk_cached_catalog() {
+        // Fast path: return persisted full catalog immediately, then refresh in background.
+        let merged = merge_catalog_sources(&[items, config_items.clone()]);
+        save_cached_catalog(merged.clone());
+        refresh_catalog_in_background();
+        return Ok(merged);
     }
 
-    let cli_items = match list_from_openclaw_cli_with_timeout(MODEL_CATALOG_CLI_TIMEOUT) {
+    // Cold path: no cache available, wait longer to maximize chance of full CLI catalog.
+    let cli_items = match list_from_openclaw_cli_with_timeout(MODEL_CATALOG_CLI_COLD_TIMEOUT) {
         Ok(items) => items,
         Err(err) => {
             logger::warn(&format!("Model catalog CLI query failed: {err}"));
             vec![]
         }
     };
-    if cli_items.is_empty() {
-        logger::warn("Model catalog CLI result is empty. Merging config and built-in catalog.");
-    }
-
-    let merged = merge_catalog_sources(&[cli_items, list_from_config_json(), fallback_catalog()]);
+    let cli_has_items = !cli_items.is_empty();
+    let merged = if !cli_has_items {
+        logger::warn(
+            "Model catalog CLI result is empty. Falling back to config + built-in catalog.",
+        );
+        merge_catalog_sources(&[config_items, fallback_catalog()])
+    } else {
+        // Strict mode: when CLI is available, do not mix built-in fallback models.
+        merge_catalog_sources(&[cli_items, config_items])
+    };
     save_cached_catalog(merged.clone());
+    if cli_has_items {
+        save_disk_cached_catalog(&merged);
+    }
     Ok(merged)
 }
 
@@ -77,7 +113,7 @@ fn list_from_openclaw_cli_with_timeout(timeout: Duration) -> Result<Vec<ModelCat
         Ok(result) => result,
         Err(mpsc::RecvTimeoutError::Timeout) => {
             logger::warn(&format!(
-                "Model catalog CLI timed out after {} ms; using fallback catalog.",
+                "Model catalog CLI timed out after {} ms; trying cache/fallback.",
                 timeout.as_millis()
             ));
             Ok(vec![])
@@ -102,6 +138,58 @@ fn save_cached_catalog(items: Vec<ModelCatalogItem>) {
             items,
         });
     }
+}
+
+fn model_catalog_cache_path() -> std::path::PathBuf {
+    paths::state_dir().join("model_catalog_cache.json")
+}
+
+fn save_disk_cached_catalog(items: &[ModelCatalogItem]) {
+    let payload = ModelCatalogDiskCache {
+        saved_at_unix_ms: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis())
+            .unwrap_or(0),
+        items: items.to_vec(),
+    };
+    let path = model_catalog_cache_path();
+    if let Ok(text) = serde_json::to_string(&payload) {
+        let _ = fs::write(path, text);
+    }
+}
+
+fn load_disk_cached_catalog() -> Option<Vec<ModelCatalogItem>> {
+    let path = model_catalog_cache_path();
+    let raw = fs::read_to_string(path).ok()?;
+    let parsed = serde_json::from_str::<ModelCatalogDiskCache>(&raw).ok()?;
+    if parsed.items.len() < MODEL_CATALOG_MIN_ACCEPTABLE_COUNT {
+        return None;
+    }
+
+    let now_unix_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let age_ms = now_unix_ms.saturating_sub(parsed.saved_at_unix_ms);
+    if age_ms > MODEL_CATALOG_DISK_CACHE_TTL.as_millis() {
+        return None;
+    }
+
+    Some(parsed.items)
+}
+
+fn refresh_catalog_in_background() {
+    thread::spawn(|| {
+        let Ok(cli_items) = list_from_openclaw_cli_with_timeout(MODEL_CATALOG_CLI_TIMEOUT) else {
+            return;
+        };
+        if cli_items.is_empty() {
+            return;
+        }
+        let merged = merge_catalog_sources(&[cli_items, list_from_config_json()]);
+        save_cached_catalog(merged.clone());
+        save_disk_cached_catalog(&merged);
+    });
 }
 
 fn merge_catalog_sources(sources: &[Vec<ModelCatalogItem>]) -> Vec<ModelCatalogItem> {
@@ -133,7 +221,10 @@ fn list_from_openclaw_cli() -> Result<Vec<ModelCatalogItem>> {
     let npm_cache_text = npm_cache.to_string_lossy().to_string();
     envs.push(("NPM_CONFIG_CACHE".to_string(), npm_cache_text.clone()));
     envs.push(("npm_config_cache".to_string(), npm_cache_text));
-    envs.push(("npm_config_update_notifier".to_string(), "false".to_string()));
+    envs.push((
+        "npm_config_update_notifier".to_string(),
+        "false".to_string(),
+    ));
 
     let commands = resolve_openclaw_commands();
     for command in commands {
@@ -148,6 +239,19 @@ fn list_from_openclaw_cli() -> Result<Vec<ModelCatalogItem>> {
             }
         };
         if !json_items.is_empty() {
+            if json_items.len() < MODEL_CATALOG_MIN_ACCEPTABLE_COUNT {
+                logger::warn(&format!(
+                    "Model catalog via {} returned only {} models; trying next command.",
+                    command,
+                    json_items.len()
+                ));
+                continue;
+            }
+            logger::info(&format!(
+                "Model catalog loaded via {} (json): {} models.",
+                command,
+                json_items.len()
+            ));
             return Ok(json_items);
         }
 
@@ -162,6 +266,19 @@ fn list_from_openclaw_cli() -> Result<Vec<ModelCatalogItem>> {
             }
         };
         if !plain_items.is_empty() {
+            if plain_items.len() < MODEL_CATALOG_MIN_ACCEPTABLE_COUNT {
+                logger::warn(&format!(
+                    "Plain model catalog via {} returned only {} models; trying next command.",
+                    command,
+                    plain_items.len()
+                ));
+                continue;
+            }
+            logger::info(&format!(
+                "Model catalog loaded via {} (plain): {} models.",
+                command,
+                plain_items.len()
+            ));
             return Ok(plain_items);
         }
     }
@@ -223,7 +340,7 @@ fn run_models_list_json(command: &str, envs: &[(String, String)]) -> Result<Vec<
         .into_iter()
         .filter(|entry| !entry.key.trim().is_empty())
         .map(|entry| {
-            let key = normalize_known_model_key(entry.key.as_str());
+            let key = model_identity::normalize_known_model_key(entry.key.as_str());
             ModelCatalogItem {
                 provider: provider_from_key(key.as_str()),
                 key: key.clone(),
@@ -299,7 +416,7 @@ fn parse_models_plain(raw: &str) -> Vec<ModelCatalogItem> {
             }
             let token = trimmed.split_whitespace().next().unwrap_or("");
             let key = token.trim_end_matches(',').trim_end_matches(':').trim();
-            let key = normalize_known_model_key(key);
+            let key = model_identity::normalize_known_model_key(key);
             if !looks_like_model_key(key.as_str()) {
                 return None;
             }
@@ -365,15 +482,25 @@ fn resolve_openclaw_commands() -> Vec<String> {
     let mut out = Vec::<String>::new();
 
     if let Ok(Some(state)) = state_store::load_install_state() {
+        let mut deferred_npx: Option<String> = None;
         let cmd = state.command_path.trim().trim_matches('"').to_string();
         if !cmd.is_empty() {
-            if cmd.eq_ignore_ascii_case("npx") {
-                if let Some(npx) = shell::command_exists("npx") {
-                    out.push(npx);
-                }
+            if is_npx_command(cmd.as_str()) {
+                deferred_npx = shell::command_exists("npx");
             } else {
                 out.push(cmd);
             }
+        }
+
+        let install_dir = state.install_dir.trim();
+        if !install_dir.is_empty() {
+            out.extend(local_openclaw_command_candidates(std::path::Path::new(
+                install_dir,
+            )));
+        }
+
+        if let Some(npx) = deferred_npx {
+            out.push(npx);
         }
     }
 
@@ -397,6 +524,28 @@ fn resolve_openclaw_commands() -> Vec<String> {
     out.into_iter()
         .filter(|command| is_model_list_command_usable(command))
         .collect()
+}
+
+fn local_openclaw_command_candidates(install_dir: &std::path::Path) -> Vec<String> {
+    [
+        install_dir.join("openclaw.exe"),
+        install_dir
+            .join("node_modules")
+            .join(".bin")
+            .join("openclaw.cmd"),
+        install_dir
+            .join("node_modules")
+            .join(".bin")
+            .join("openclaw"),
+        install_dir
+            .join("node_modules")
+            .join(".bin")
+            .join("openclaw.ps1"),
+    ]
+    .into_iter()
+    .filter(|path| path.exists())
+    .map(|path| path.to_string_lossy().to_string())
+    .collect()
 }
 
 fn is_model_list_command_usable(command: &str) -> bool {
@@ -430,7 +579,7 @@ fn list_from_config_json() -> Vec<ModelCatalogItem> {
         .and_then(|v| v.as_object())
     {
         for (key, item) in entries {
-            let normalized_key = normalize_known_model_key(key);
+            let normalized_key = model_identity::normalize_known_model_key(key);
             let name = item
                 .get("alias")
                 .and_then(|v| v.as_str())
@@ -451,7 +600,7 @@ fn list_from_config_json() -> Vec<ModelCatalogItem> {
         .and_then(|v| v.as_str())
         .filter(|v| !v.trim().is_empty())
     {
-        let primary = normalize_known_model_key(primary);
+        let primary = model_identity::normalize_known_model_key(primary);
         out.push(ModelCatalogItem {
             key: primary.clone(),
             provider: provider_from_key(primary.as_str()),
@@ -466,7 +615,7 @@ fn list_from_config_json() -> Vec<ModelCatalogItem> {
     {
         for item in fallbacks {
             if let Some(model_key) = item.as_str() {
-                let model_key = normalize_known_model_key(model_key);
+                let model_key = model_identity::normalize_known_model_key(model_key);
                 out.push(ModelCatalogItem {
                     key: model_key.clone(),
                     provider: provider_from_key(model_key.as_str()),
@@ -498,41 +647,30 @@ fn fallback_catalog() -> Vec<ModelCatalogItem> {
         catalog_item("google/gemini-2.5-pro", "Gemini 2.5 Pro"),
         catalog_item("google/gemini-2.5-flash", "Gemini 2.5 Flash"),
         catalog_item("google/gemini-2.0-flash", "Gemini 2.0 Flash"),
-        // Moonshot (Kimi) model refs are: moonshot/<modelId>.
-        // Keep this list aligned with upstream OpenClaw docs as a fallback when CLI listing is unavailable.
-        catalog_item("moonshot/kimi-k2-0905-preview", "Kimi K2 0905 Preview"),
-        catalog_item("moonshot/kimi-k2-turbo-preview", "Kimi K2 Turbo"),
-        catalog_item("moonshot/kimi-k2-thinking", "Kimi K2 Thinking"),
-        catalog_item(
-            "moonshot/kimi-k2-thinking-turbo",
-            "Kimi K2 Thinking Turbo",
-        ),
-        catalog_item("moonshot/kimi-k2-250711", "Kimi K2 250711"),
-        // OpenClaw uses `kimi-k2.5` (not `kimi-2.5`) as the Moonshot provider model id.
-        catalog_item("moonshot/kimi-k2.5", "Kimi K2.5"),
-        // Kimi Coding is a separate provider (different endpoint + key): kimi-coding/<modelId>.
+        // Fallback only applies when CLI listing is unavailable.
+        // Keep the snapshot close to current upstream model ids.
         catalog_item("kimi-coding/k2p5", "Kimi K2.5 (Coding)"),
+        catalog_item("kimi-coding/kimi-k2-thinking", "Kimi K2 Thinking (Coding)"),
         catalog_item("xai/grok-4", "Grok 4"),
         catalog_item("xai/grok-3", "Grok 3"),
         catalog_item("openrouter/moonshotai/kimi-k2", "OpenRouter Kimi K2"),
+        catalog_item("openrouter/moonshotai/kimi-k2.5", "OpenRouter Kimi K2.5"),
         catalog_item(
-            "openrouter/anthropic/claude-sonnet-4-5",
+            "openrouter/anthropic/claude-sonnet-4.5",
             "OpenRouter Claude Sonnet 4.5",
         ),
         catalog_item("zai/glm-4.5", "GLM 4.5"),
         catalog_item("zai/glm-4.5-air", "GLM 4.5 Air"),
-        catalog_item("minimax/minimax-m1", "MiniMax M1"),
-        catalog_item("minimax/minimax-01", "MiniMax 01"),
-        catalog_item("qwen/qwen3-max", "Qwen 3 Max"),
-        catalog_item("qwen/qwen3-coder-plus", "Qwen 3 Coder Plus"),
-        catalog_item("xiaomi/miq-3", "MiQ 3"),
-        catalog_item("venice/llama-3.3-70b", "Venice Llama 3.3 70B"),
-        catalog_item("venice/claude-opus-45", "Venice Claude Opus 4.5"),
+        catalog_item("minimax/MiniMax-M2", "MiniMax M2"),
+        catalog_item("openrouter/qwen/qwen3-max", "Qwen 3 Max (OpenRouter)"),
         catalog_item(
-            "bedrock/anthropic.claude-sonnet-4-5",
+            "openrouter/qwen/qwen3-coder-plus",
+            "Qwen 3 Coder Plus (OpenRouter)",
+        ),
+        catalog_item(
+            "amazon-bedrock/anthropic.claude-sonnet-4-5-20250929-v1:0",
             "Bedrock Claude Sonnet 4.5",
         ),
-        catalog_item("qianfan/ernie-4.0-turbo", "ERNIE 4.0 Turbo"),
     ];
     items.sort_by(|a, b| a.key.cmp(&b.key));
     items.dedup_by(|a, b| a.key == b.key);
@@ -550,25 +688,7 @@ fn catalog_item(key: &str, name: &str) -> ModelCatalogItem {
 }
 
 fn provider_from_key(model_key: &str) -> String {
-    model_key
-        .split_once('/')
-        .map(|(provider, _)| provider.trim().to_string())
-        .filter(|v| !v.is_empty())
-        .unwrap_or_else(|| "unknown".to_string())
-}
-
-fn normalize_known_model_key(raw: &str) -> String {
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return String::new();
-    }
-    // Backward compatibility: older UI/builds used the wrong Kimi 2.5 id.
-    // OpenClaw uses `kimi-k2.5`.
-    let lowered = trimmed.to_ascii_lowercase();
-    if lowered == "moonshot/kimi-2.5" || lowered == "moonshot/kimi2.5" {
-        return "moonshot/kimi-k2.5".to_string();
-    }
-    trimmed.to_string()
+    model_identity::provider_from_model_key_or_unknown(model_key)
 }
 
 #[cfg(test)]
@@ -619,11 +739,14 @@ anthropic/claude-sonnet-4-5 available
     #[test]
     fn fallback_catalog_includes_multiple_providers_and_kimi_25() {
         let items = fallback_catalog();
-        assert!(items.iter().any(|item| item.key == "moonshot/kimi-k2.5"));
+        assert!(items.iter().any(|item| item.key == "kimi-coding/k2p5"));
         assert!(items.iter().any(|item| item.key == "openai/gpt-5.2"));
         assert!(items
             .iter()
             .any(|item| item.key == "anthropic/claude-sonnet-4-5"));
         assert!(items.iter().any(|item| item.key == "google/gemini-2.5-pro"));
+        assert!(items
+            .iter()
+            .any(|item| item.key == "openrouter/qwen/qwen3-max"));
     }
 }

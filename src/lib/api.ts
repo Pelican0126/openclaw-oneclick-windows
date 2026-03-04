@@ -79,7 +79,7 @@ export const listModelCatalog = () =>
     invoke<ModelCatalogItem[]>("list_model_catalog"),
     // Model catalog may need to spawn OpenClaw CLI / npx on first run, which can take time on Windows.
     // Keep the UI responsive with a loader, but don't time out too aggressively.
-    15_000,
+    35_000,
     "list_model_catalog timed out"
   );
 export const setupTelegramPair = (pairCode: string) => invoke<string>("setup_telegram_pair", { pairCode });

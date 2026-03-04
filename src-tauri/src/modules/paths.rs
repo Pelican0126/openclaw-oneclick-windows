@@ -80,7 +80,9 @@ pub fn is_user_profile_default_openclaw_dir(path: &std::path::Path) -> bool {
     };
 
     let needle = normalize(path);
-    candidates.iter().any(|candidate| needle == normalize(candidate))
+    candidates
+        .iter()
+        .any(|candidate| needle == normalize(candidate))
 }
 
 pub fn ensure_dirs() -> Result<()> {

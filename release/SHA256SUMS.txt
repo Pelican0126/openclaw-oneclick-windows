@@ -1,0 +1,3 @@
+d5257cf6532eb41ff6cbdde8183ef5347bbbba562d11fff132a304e1b469b37c  OpenClawInstaller-v1.0.0-setup.exe
+aeb9f5f9e1a102db1832d14d7ece3c29dc50319920a8bc1a571000973d11ba10  OpenClawInstaller-v1.0.0.msi
+0faddb9694d6dfc4e0c92ce77d773c130d03a609f414c1dd36cf294d6732b5d6  OpenClawInstaller-v1.0.0-windows.zip

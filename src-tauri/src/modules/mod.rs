@@ -7,6 +7,7 @@ pub mod health;
 pub mod installer;
 pub mod logger;
 pub mod model_catalog;
+pub mod model_identity;
 pub mod paths;
 pub mod port;
 pub mod process;

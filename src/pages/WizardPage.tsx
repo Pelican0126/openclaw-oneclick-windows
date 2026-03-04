@@ -1,9 +1,9 @@
-import { useDeferredValue, useEffect, useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import { LinearProgress } from "../components/LinearProgress";
 import type { Language, ModelCatalogItem, OpenClawConfigInput, SkillCatalogItem } from "../lib/types";
 import { t } from "../lib/i18n";
 import { listModelCatalog, listSkillCatalog } from "../lib/api";
-import { FALLBACK_MODEL_CATALOG, mergeModelCatalog } from "../lib/modelCatalog";
+import { mergeModelCatalogOptions, WIZARD_PRESET_MODEL_CATALOG } from "../lib/modelCatalogPreset";
 
 interface WizardPageProps {
   lang: Language;
@@ -19,12 +19,12 @@ const WIZARD_STEPS = [
   "wizardStepAdvanced",
   "wizardStepConfirm"
 ] as const;
-const MODEL_RENDER_BATCH = 40;
-
 const KIMI_BASE_URL_BY_REGION: Record<OpenClawConfigInput["kimi_region"], string> = {
   cn: "https://api.moonshot.cn/v1",
   global: "https://api.moonshot.ai/v1"
 };
+const MODEL_LIST_CLI_COMMAND = "npx --yes openclaw --no-color models list --all --plain";
+const MODEL_EXAMPLE_KEYS = "openai/gpt-4.1, moonshot/kimi-k2.5, openrouter/moonshotai/kimi-k2.5";
 
 function normalizeProviderId(provider: string): string {
   const value = provider.trim().toLowerCase();
@@ -163,6 +163,9 @@ function validateStep(stepIndex: number, form: OpenClawConfigInput, lang: Langua
         return `${t(lang, "feishuAppSecret")} is required when Feishu is enabled.`;
       }
     }
+    if (form.enable_telegram_channel && !form.telegram_bot_token.trim()) {
+      return `${t(lang, "telegramToken")} is required when Telegram is enabled.`;
+    }
   }
   if (stepIndex === 3) {
     if (form.source_method === "binary" && !(form.source_url ?? "").trim()) {
@@ -186,13 +189,11 @@ export function WizardPage({ lang, initial, onBack, onSubmit }: WizardPageProps)
   const [skillsLoading, setSkillsLoading] = useState(false);
   const [skillsLoaded, setSkillsLoaded] = useState(false);
   const [skillsLoadError, setSkillsLoadError] = useState("");
-  const [modelCatalog, setModelCatalog] = useState<ModelCatalogItem[]>(() => FALLBACK_MODEL_CATALOG);
+  const [modelCatalog, setModelCatalog] = useState<ModelCatalogItem[]>(() => WIZARD_PRESET_MODEL_CATALOG);
   const [modelsLoading, setModelsLoading] = useState(false);
   const [modelsLoaded, setModelsLoaded] = useState(false);
   const [modelsLoadError, setModelsLoadError] = useState("");
-  const [modelFilter, setModelFilter] = useState("");
-  const [modelRenderCount, setModelRenderCount] = useState(MODEL_RENDER_BATCH);
-  const deferredModelFilter = useDeferredValue(modelFilter);
+  const [modelCliCopied, setModelCliCopied] = useState(false);
 
   useEffect(() => {
     setConfirmChecked(false);
@@ -249,9 +250,9 @@ export function WizardPage({ lang, initial, onBack, onSubmit }: WizardPageProps)
     listModelCatalog()
       .then((items) => {
         if (!alive) return;
-        const sorted = mergeModelCatalog(items, FALLBACK_MODEL_CATALOG);
-        setModelCatalog(sorted);
-        if (sorted.length === 0) return;
+        const merged = mergeModelCatalogOptions(items, WIZARD_PRESET_MODEL_CATALOG);
+        setModelCatalog(merged);
+        if (merged.length === 0) return;
         startStepTransition(() => {
           setForm((prev) => {
             const currentProvider = normalizeProviderId(
@@ -259,19 +260,19 @@ export function WizardPage({ lang, initial, onBack, onSubmit }: WizardPageProps)
             );
             const providerOptions = Array.from(
               new Set(
-                sorted
+                merged
                   .map((item) => normalizeProviderId(item.provider))
                   .filter((provider) => provider.length > 0)
               )
             ).sort();
             const effectiveProvider = currentProvider || providerOptions[0] || "openai";
-            const providerModels = sorted.filter(
+            const providerModels = merged.filter(
               (item) => normalizeProviderId(item.provider) === effectiveProvider
             );
-            const primaryExists = sorted.some((item) => item.key === prev.model_chain.primary);
+            const primaryExists = merged.some((item) => item.key === prev.model_chain.primary);
             const nextPrimary = primaryExists
               ? prev.model_chain.primary
-              : (providerModels[0]?.key ?? sorted[0]?.key ?? "");
+              : (providerModels[0]?.key ?? merged[0]?.key ?? "");
             if (!nextPrimary) {
               return prev;
             }
@@ -294,8 +295,7 @@ export function WizardPage({ lang, initial, onBack, onSubmit }: WizardPageProps)
         if (!alive) return;
         const message = loadError instanceof Error ? loadError.message : String(loadError);
         setModelsLoadError(message.trim());
-        setModelCatalog((prev) => mergeModelCatalog(prev, FALLBACK_MODEL_CATALOG));
-        // Keep manual input path when model catalog cannot be fetched.
+        setModelCatalog(WIZARD_PRESET_MODEL_CATALOG);
       })
       .finally(() => {
         if (!alive) return;
@@ -355,34 +355,42 @@ export function WizardPage({ lang, initial, onBack, onSubmit }: WizardPageProps)
   );
   const isPrimaryKimi = useMemo(() => isKimiProvider(primaryProvider), [primaryProvider]);
 
-  const filteredModels = useMemo(() => {
-    const keyword = deferredModelFilter.trim().toLowerCase();
-    if (!keyword) return providerModels;
-    return providerModels.filter((item) =>
-      item.key.toLowerCase().includes(keyword) ||
-      item.name.toLowerCase().includes(keyword) ||
-      item.provider.toLowerCase().includes(keyword)
-    );
-  }, [providerModels, deferredModelFilter]);
+  const providerModelNames = useMemo(() => {
+    const names = new Set<string>();
+    providerModels.forEach((item) => {
+      const parsed = parseModelKey(item.key);
+      const modelName = (parsed?.model ?? item.key).trim();
+      if (modelName) {
+        names.add(modelName);
+      }
+    });
+    return Array.from(names).sort();
+  }, [providerModels]);
 
-  useEffect(() => {
-    // Reset render window when source changes to avoid mounting large DOM trees at once.
-    setModelRenderCount(MODEL_RENDER_BATCH);
-  }, [stepIndex, selectedProvider, deferredModelFilter]);
+  const providerModelOptionItems = useMemo(
+    () => providerModels.slice().sort((a, b) => a.key.localeCompare(b.key)),
+    [providerModels]
+  );
 
-  const visibleModels = useMemo(() => {
-    if (stepIndex !== 1) {
-      return [] as ModelCatalogItem[];
+  const currentPrimaryInOptions = useMemo(
+    () => providerModelOptionItems.some((item) => item.key === form.model_chain.primary),
+    [providerModelOptionItems, form.model_chain.primary]
+  );
+
+  const primaryModelInput = useMemo(() => {
+    const raw = form.model_chain.primary.trim();
+    if (!raw) {
+      return "";
     }
-    const base = filteredModels.slice(0, modelRenderCount);
-    const selected = form.model_chain.primary.trim();
-    if (!selected || base.some((item) => item.key === selected)) {
-      return base;
+    const parsed = parseModelKey(raw);
+    if (!parsed) {
+      return raw;
     }
-    const selectedItem = filteredModels.find((item) => item.key === selected);
-    return selectedItem ? [selectedItem, ...base] : base;
-  }, [filteredModels, form.model_chain.primary, modelRenderCount, stepIndex]);
-  const hasMoreModels = filteredModels.length > visibleModels.length;
+    if (selectedProvider && normalizeProviderId(parsed.provider) === selectedProvider) {
+      return parsed.model;
+    }
+    return raw;
+  }, [form.model_chain.primary, selectedProvider]);
 
   const toggleSkill = (skillName: string, checked: boolean) => {
     setForm((prev) => {
@@ -399,39 +407,18 @@ export function WizardPage({ lang, initial, onBack, onSubmit }: WizardPageProps)
     });
   };
 
-  const onPrimaryPick = (value: string) => {
-    const parsed = parseModelKey(value);
-    const providerFromCatalog = modelCatalog.find((item) => item.key === value)?.provider;
-    startStepTransition(() => {
-      setForm((prev) => {
-        const nextProvider = normalizeProviderId(providerFromCatalog ?? parsed?.provider ?? prev.provider);
-        const nextIsKimi = isKimiProvider(nextProvider);
-        return {
-          ...prev,
-          provider: nextProvider || prev.provider,
-          api_key: nextProvider
-            ? (prev.provider_api_keys?.[nextProvider] ?? prev.api_key)
-            : prev.api_key,
-          base_url: nextIsKimi ? kimiBaseUrlForRegion(prev.kimi_region) : prev.base_url,
-          model_chain: {
-            primary: value,
-            fallbacks: []
-          }
-        };
-      });
-    });
-  };
-
   const onProviderPick = (rawProvider: string) => {
     const normalized = normalizeProviderId(rawProvider);
-    setModelFilter("");
     startStepTransition(() => {
       setForm((prev) => {
         const providerScopedModels = modelCatalog.filter(
           (item) => normalizeProviderId(item.provider) === normalized
         );
         const keepCurrent = providerScopedModels.some((item) => item.key === prev.model_chain.primary);
-        const nextPrimary = keepCurrent ? prev.model_chain.primary : (providerScopedModels[0]?.key ?? "");
+        const fallbackModelName = parseModelKey(prev.model_chain.primary)?.model ?? "gpt-5.2";
+        const nextPrimary = keepCurrent
+          ? prev.model_chain.primary
+          : (providerScopedModels[0]?.key ?? normalizeModelKey(fallbackModelName, normalized || prev.provider));
         const resolvedProvider = normalizeProviderId(
           parseModelKey(nextPrimary)?.provider ?? normalized
         );
@@ -441,6 +428,35 @@ export function WizardPage({ lang, initial, onBack, onSubmit }: WizardPageProps)
           provider: resolvedProvider || normalized || prev.provider,
           api_key: resolvedProvider
             ? (prev.provider_api_keys?.[resolvedProvider] ?? prev.api_key)
+            : prev.api_key,
+          base_url: nextIsKimi ? kimiBaseUrlForRegion(prev.kimi_region) : prev.base_url,
+          model_chain: {
+            primary: nextPrimary,
+            fallbacks: []
+          }
+        };
+      });
+    });
+  };
+
+  const onPrimaryModelInput = (rawModel: string) => {
+    startStepTransition(() => {
+      setForm((prev) => {
+        const baseProvider = normalizeProviderId(
+          parseModelKey(prev.model_chain.primary)?.provider ?? selectedProvider ?? prev.provider
+        );
+        const nextPrimary = rawModel.trim()
+          ? normalizeModelKey(rawModel, baseProvider || "openai")
+          : "";
+        const nextProvider = normalizeProviderId(
+          parseModelKey(nextPrimary)?.provider ?? baseProvider
+        );
+        const nextIsKimi = isKimiProvider(nextProvider);
+        return {
+          ...prev,
+          provider: nextProvider || prev.provider,
+          api_key: nextProvider
+            ? (prev.provider_api_keys?.[nextProvider] ?? prev.api_key)
             : prev.api_key,
           base_url: nextIsKimi ? kimiBaseUrlForRegion(prev.kimi_region) : prev.base_url,
           model_chain: {
@@ -470,6 +486,16 @@ export function WizardPage({ lang, initial, onBack, onSubmit }: WizardPageProps)
         }
       };
     });
+  };
+
+  const copyModelListCommand = async () => {
+    try {
+      await navigator.clipboard.writeText(MODEL_LIST_CLI_COMMAND);
+      setModelCliCopied(true);
+      window.setTimeout(() => setModelCliCopied(false), 1400);
+    } catch {
+      setModelCliCopied(false);
+    }
   };
 
   const onPrimaryProviderInput = (rawProvider: string) => {
@@ -680,12 +706,52 @@ export function WizardPage({ lang, initial, onBack, onSubmit }: WizardPageProps)
           </label>
 
           <label className="wide">
+            <span>{t(lang, "modelPresetOptions")}</span>
+            <select
+              value={currentPrimaryInOptions ? form.model_chain.primary : ""}
+              onChange={(e) => {
+                if (!e.target.value) return;
+                onPrimaryModelInput(e.target.value);
+              }}
+            >
+              <option value="">{t(lang, "manualModelEntry")}</option>
+              {providerModelOptionItems.map((item) => (
+                <option key={`preset-${item.key}`} value={item.key}>
+                  {item.key}
+                </option>
+              ))}
+            </select>
+            <small>{t(lang, "modelPresetHint")}</small>
+          </label>
+
+          <label className="wide">
             <span>{t(lang, "primaryModel")}</span>
             <input
-              value={modelFilter}
-              onChange={(e) => setModelFilter(e.target.value)}
-              placeholder={t(lang, "searchModel")}
+              value={primaryModelInput}
+              onChange={(e) => onPrimaryModelInput(e.target.value)}
+              placeholder={modelCatalog.length > 0 ? "gpt-5.2 / provider/model" : "provider/model"}
+              list={modelCatalog.length > 0 && providerModelNames.length > 0 ? "wizard-model-options" : undefined}
             />
+            {modelCatalog.length > 0 && providerModelNames.length > 0 && (
+              <datalist id="wizard-model-options">
+                {providerModelNames.map((modelName) => (
+                  <option key={`wizard-model-${modelName}`} value={modelName} label={`${selectedProvider}/${modelName}`} />
+                ))}
+              </datalist>
+            )}
+            <small>{modelCatalog.length > 0 ? t(lang, "providerSelectHint") : t(lang, "noModelCatalog")}</small>
+            {modelCatalog.length > 0 && <small>{t(lang, "showingModels")}: {modelCatalog.length}</small>}
+            <small>{t(lang, "modelInputHint")}</small>
+            <small>
+              {t(lang, "modelExamplesLabel")}: {MODEL_EXAMPLE_KEYS}
+            </small>
+            <div className="inline">
+              <input value={MODEL_LIST_CLI_COMMAND} readOnly />
+              <button type="button" className="secondary" onClick={copyModelListCommand}>
+                {modelCliCopied ? t(lang, "copied") : t(lang, "copyCliCommand")}
+              </button>
+            </div>
+            <small>{t(lang, "modelCliHint")}</small>
           </label>
 
           {modelsLoading && (
@@ -698,65 +764,14 @@ export function WizardPage({ lang, initial, onBack, onSubmit }: WizardPageProps)
           )}
           {modelsLoadError && (
             <div className="alert wide">
-              {t(lang, "noModelCatalog")} ({modelsLoadError})
+              {t(lang, "modelCatalogFallbackNotice")} ({modelsLoadError})
             </div>
           )}
 
-          {modelCatalog.length > 0 && visibleModels.length > 0 && (
-            <div className="model-select-list wide">
-              {visibleModels.map((item) => (
-                <label className="check-item model-item" key={`model-${item.key}`}>
-                  <input
-                    type="radio"
-                    name="primary-model-radio"
-                    checked={form.model_chain.primary === item.key}
-                    onChange={() => onPrimaryPick(item.key)}
-                  />
-                  <div>
-                    <strong>{item.key}</strong>
-                    <div className="muted-inline">{item.name}</div>
-                    <div className={item.available === false || item.missing ? "warn" : "ok"}>
-                      {item.available === false || item.missing ? t(lang, "skillNotReady") : t(lang, "skillReady")}
-                    </div>
-                  </div>
-                </label>
-              ))}
-            </div>
-          )}
-
-          {modelCatalog.length > 0 && (
-            <div className="wide model-render-footer">
-              <span className="muted-inline">
-                {t(lang, "showingModels")}: {visibleModels.length} / {filteredModels.length}
-              </span>
-              {hasMoreModels && (
-                <button
-                  type="button"
-                  className="secondary"
-                  onClick={() => setModelRenderCount((prev) => prev + MODEL_RENDER_BATCH)}
-                >
-                  {t(lang, "loadMoreModels")}
-                </button>
-              )}
-            </div>
-          )}
-
-          {modelCatalog.length > 0 && filteredModels.length === 0 && (
+          {modelCatalog.length > 0 && providerModelNames.length === 0 && (
             <div className="alert wide">
               {t(lang, "noProviderModels")} {selectedProvider ? `(${selectedProvider})` : ""}
             </div>
-          )}
-
-          {modelCatalog.length === 0 && (
-            <label className="wide">
-              <span>{t(lang, "primaryModel")}</span>
-              <input
-                value={form.model_chain.primary}
-                onChange={(e) => onPrimaryPick(e.target.value)}
-                placeholder="provider/model"
-              />
-              <small>{t(lang, "noModelCatalog")}</small>
-            </label>
           )}
 
           <label className="wide">
@@ -910,6 +925,39 @@ export function WizardPage({ lang, initial, onBack, onSubmit }: WizardPageProps)
               </label>
               <label className="wide">
                 <small>{t(lang, "feishuHint")}</small>
+              </label>
+            </div>
+          )}
+
+          <h3>{t(lang, "telegramIntegration")}</h3>
+          <label className="check-item">
+            <input
+              type="checkbox"
+              checked={form.enable_telegram_channel}
+              onChange={(e) =>
+                setForm({
+                  ...form,
+                  enable_telegram_channel: e.target.checked,
+                  telegram_bot_token: e.target.checked ? form.telegram_bot_token : "",
+                  telegram_pair_code: ""
+                })
+              }
+            />
+            <span>{t(lang, "telegramEnable")}</span>
+          </label>
+          {form.enable_telegram_channel && (
+            <div className="form-grid advanced-grid">
+              <label>
+                <span>{t(lang, "telegramToken")}</span>
+                <input
+                  type="password"
+                  value={form.telegram_bot_token}
+                  onChange={(e) => setForm({ ...form, telegram_bot_token: e.target.value })}
+                  placeholder="123456789:AA..."
+                />
+              </label>
+              <label className="wide">
+                <small>{t(lang, "telegramHint")}</small>
               </label>
             </div>
           )}

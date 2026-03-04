@@ -330,6 +330,14 @@ button.secondary {
   font-size: 0.95rem;
 }
 
+.donate-crypto-block {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px dashed rgba(34, 131, 255, 0.24);
+  display: grid;
+  gap: 8px;
+}
+
 .list {
   margin: 0;
   padding: 0;

@@ -7,26 +7,64 @@ param(
 $ErrorActionPreference = "Stop"
 
 function RgFiles([string]$Pattern, [string[]]$ExtraGlobs) {
-  $globs = @(
-    "-g", "!node_modules/**",
-    "-g", "!dist/**",
-    "-g", "!.smoke/**",
-    "-g", "!.smoke-temp/**",
-    "-g", "!%TEMP%/**",
-    "-g", "!~/**",
-    "-g", "!src-tauri/target/**",
-    "-g", "!src-tauri/target-alt/**",
-    "-g", "!src-tauri/src-tauri/target-smoke/**"
-  )
-  if ($SkipSource) {
-    $globs += @("-g", "!source/**")
-  }
-  if ($ExtraGlobs -and $ExtraGlobs.Count -gt 0) {
-    $globs += $ExtraGlobs
+  $rg = Get-Command rg -ErrorAction SilentlyContinue
+  if ($rg) {
+    $globs = @(
+      "-g", "!node_modules/**",
+      "-g", "!dist/**",
+      "-g", "!.smoke/**",
+      "-g", "!.smoke-temp/**",
+      "-g", "!%TEMP%/**",
+      "-g", "!~/**",
+      "-g", "!src-tauri/target/**",
+      "-g", "!src-tauri/target-alt/**",
+      "-g", "!src-tauri/src-tauri/target-smoke/**"
+    )
+    if ($SkipSource) {
+      $globs += @("-g", "!source/**")
+    }
+    if ($ExtraGlobs -and $ExtraGlobs.Count -gt 0) {
+      $globs += $ExtraGlobs
+    }
+
+    # `-l` prints only file paths (no secret values).
+    return & rg -l -S $Pattern @globs .
   }
 
-  # `-l` prints only file paths (no secret values).
-  & rg -l -S $Pattern @globs .
+  Write-Host "[WARN] ripgrep (rg) not found, using slower PowerShell fallback scanner."
+
+  $excludeRegex = "\\node_modules\\|\\dist\\|\\.smoke\\|\\.smoke-temp\\|\\%TEMP%\\|\\~\\|\\src-tauri\\target\\|\\src-tauri\\target-alt\\|\\src-tauri\\src-tauri\\target-smoke\\"
+  if ($SkipSource) {
+    $excludeRegex = "$excludeRegex|\\source\\"
+  }
+
+  $textExtensions = @(
+    ".md", ".txt", ".json", ".toml", ".yml", ".yaml",
+    ".rs", ".ts", ".tsx", ".js", ".cjs", ".mjs",
+    ".cmd", ".bat", ".ps1", ".ini", ".env", ".lock"
+  )
+
+  $hits = New-Object System.Collections.Generic.List[string]
+  Get-ChildItem -Recurse -File -ErrorAction SilentlyContinue | ForEach-Object {
+    $fullPath = $_.FullName
+    if ($fullPath -match $excludeRegex) {
+      return
+    }
+    $ext = $_.Extension.ToLowerInvariant()
+    if ($textExtensions -notcontains $ext) {
+      return
+    }
+    try {
+      if (Select-String -Path $fullPath -Pattern $Pattern -Quiet -ErrorAction SilentlyContinue) {
+        $rel = Resolve-Path -Relative $fullPath
+        $hits.Add($rel)
+      }
+    } catch {
+      # Ignore unreadable/binary files.
+    }
+  }
+
+  return $hits | Sort-Object -Unique
 }
 
 Write-Host "== Secret scan (safe file-only output) =="
