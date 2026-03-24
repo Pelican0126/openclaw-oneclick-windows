@@ -121,6 +121,7 @@ function App() {
       currentPage={page}
       onNavigate={(next) => setPage(next as AppPage)}
       statusText={statusText}
+      running={status?.running ?? false}
       version={status?.version || "-"}
       model={status?.current_model || "-"}
     >

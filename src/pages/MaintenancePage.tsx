@@ -545,8 +545,8 @@ export function MaintenancePage({ lang, onStatusUpdate }: MaintenancePageProps) 
 
       <div className="card-grid">
         <div className="card">
-          <h3>Status</h3>
-          <p>PID: {status?.pid ?? "-"}</p>
+          <h3>{t(lang, "statusCardTitle")}</h3>
+          <p>{t(lang, "pid")}: {status?.pid ?? "-"}</p>
           <p>
             {t(lang, "version")}: {status?.version || "-"}
           </p>
@@ -554,7 +554,7 @@ export function MaintenancePage({ lang, onStatusUpdate }: MaintenancePageProps) 
             {t(lang, "currentModel")}: {status?.current_model || "-"}
           </p>
           <p>
-            {t(lang, "health")}: {status?.health.ok ? "OK" : "FAIL"}
+            {t(lang, "health")}: {status?.health.ok ? t(lang, "healthOk") : t(lang, "healthFail")}
           </p>
           <button type="button" className="secondary" onClick={() => runAction("open-dashboard", () => openManagementUrl(managementUrl))}>
             {t(lang, "openDashboard")}
@@ -606,7 +606,7 @@ export function MaintenancePage({ lang, onStatusUpdate }: MaintenancePageProps) 
         <div className="card">
           <h3>{t(lang, "riskTips")}</h3>
           <p>{t(lang, "riskTipsText")}</p>
-          <p>Security score: {riskScore}/100</p>
+          <p>{t(lang, "securityScore")}: {riskScore}/100</p>
           <button
             type="button"
             onClick={() => runAction("security check", async () => setSecurity(await securityCheck()))}

@@ -7,6 +7,7 @@ interface LayoutProps {
   currentPage: string;
   onNavigate: (page: string) => void;
   statusText: string;
+  running: boolean;
   version: string;
   model: string;
   children: React.ReactNode;
@@ -26,6 +27,7 @@ export function Layout({
   currentPage,
   onNavigate,
   statusText,
+  running,
   version,
   model,
   children
@@ -52,7 +54,10 @@ export function Layout({
       </aside>
       <main className="content-wrap">
         <header className="topbar glass">
-          <div className="status-pill">{statusText}</div>
+          <div className={`status-pill ${running ? "status-running" : "status-stopped"}`}>
+            <span className="status-dot" aria-hidden="true" />
+            {statusText}
+          </div>
           <div className="meta">
             <span>
               {t(lang, "version")}: {version || "-"}

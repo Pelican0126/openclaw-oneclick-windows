@@ -36,23 +36,23 @@ export function WelcomePage({ lang, checking, env, error, onCheck, onNext }: Wel
             <p>{env.network_detail}</p>
           </div>
           <div className="card">
-            <h3>Dependencies</h3>
+            <h3>{t(lang, "dependencies")}</h3>
             <ul className="list">
               {env.dependencies.map((dep) => (
                 <li key={dep.name}>
                   <span>{dep.name}</span>
-                  <span className={dep.found ? "ok" : "warn"}>{dep.found ? "OK" : "Missing"}</span>
+                  <span className={dep.found ? "ok" : "warn"}>{dep.found ? t(lang, "depOk") : t(lang, "depMissing")}</span>
                 </li>
               ))}
             </ul>
           </div>
           <div className="card">
-            <h3>Port</h3>
+            <h3>{t(lang, "portTitle")}</h3>
             <p>{env.port_status.port}</p>
             <p>
               {env.port_status.in_use
-                ? `In use by ${env.port_status.process_name ?? "unknown"} (PID ${env.port_status.pid ?? "?"})`
-                : "Available"}
+                ? `${t(lang, "portInUse")} ${env.port_status.process_name ?? "unknown"} (PID ${env.port_status.pid ?? "?"})`
+                : t(lang, "portAvailable")}
             </p>
           </div>
         </div>

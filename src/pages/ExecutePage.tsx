@@ -386,7 +386,7 @@ export function ExecutePage({ lang, payload, onBack, onSuccess }: ExecutePagePro
 
       <div className="card-grid">
         <div className="card">
-          <h3>Steps</h3>
+          <h3>{t(lang, "stepsTitle")}</h3>
           <ul className="list">
             {steps.map((step) => (
               <li key={step.key}>
@@ -420,7 +420,7 @@ export function ExecutePage({ lang, payload, onBack, onSuccess }: ExecutePagePro
           </div>
         </div>
         <div className="card log-card">
-          <h3>Logs</h3>
+          <h3>{t(lang, "logs")}</h3>
           <textarea value={logText} readOnly rows={20} />
           <div className="action-row">
             <button
@@ -430,7 +430,7 @@ export function ExecutePage({ lang, payload, onBack, onSuccess }: ExecutePagePro
                 navigator.clipboard.writeText(logText).catch(() => undefined);
               }}
             >
-              Copy
+              {t(lang, "copy")}
             </button>
             {logsDir && (
               <button

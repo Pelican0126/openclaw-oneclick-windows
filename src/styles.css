@@ -132,6 +132,43 @@ body {
   background: rgba(34, 131, 255, 0.14);
   font-weight: 600;
   white-space: nowrap;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+  flex-shrink: 0;
+}
+
+.status-running {
+  background: rgba(12, 159, 100, 0.14);
+  color: var(--ok);
+}
+
+.status-running .status-dot {
+  background: var(--ok);
+  box-shadow: 0 0 0 3px rgba(12, 159, 100, 0.2);
+  animation: pulse 2s ease-in-out infinite;
+}
+
+.status-stopped {
+  background: rgba(198, 51, 51, 0.12);
+  color: var(--error);
+}
+
+.status-stopped .status-dot {
+  background: var(--error);
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
 }
 
 .meta {

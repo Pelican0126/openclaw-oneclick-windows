@@ -196,7 +196,20 @@ const zh: Dict = {
   uninstallCompleted: "卸载完成",
   done: "完成",
   show: "显示",
-  hide: "隐藏"
+  hide: "隐藏",
+  statusCardTitle: "运行状态",
+  pid: "PID",
+  healthOk: "正常",
+  healthFail: "异常",
+  securityScore: "安全评分",
+  dependencies: "依赖项",
+  depOk: "正常",
+  depMissing: "缺失",
+  portTitle: "端口",
+  portInUse: "被占用，来自",
+  portAvailable: "可用",
+  stepsTitle: "步骤",
+  copy: "复制"
 };
 
 const en: Dict = {
@@ -393,7 +406,20 @@ const en: Dict = {
   uninstallCompleted: "Uninstall completed",
   done: "Done",
   show: "Show",
-  hide: "Hide"
+  hide: "Hide",
+  statusCardTitle: "Status",
+  pid: "PID",
+  healthOk: "OK",
+  healthFail: "FAIL",
+  securityScore: "Security score",
+  dependencies: "Dependencies",
+  depOk: "OK",
+  depMissing: "Missing",
+  portTitle: "Port",
+  portInUse: "In use by",
+  portAvailable: "Available",
+  stepsTitle: "Steps",
+  copy: "Copy"
 };
 
 export const dict: Record<Language, Dict> = { zh, en };
