@@ -17,9 +17,13 @@ param(
   [switch]$Prerelease
 )
 
-$ErrorActionPreference = "Stop"
+$ErrorActionPreference = "Continue"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $repoRoot
+
+function Assert-ExitCode($cmd) {
+  if ($LASTEXITCODE -ne 0) { throw "$cmd failed (exit $LASTEXITCODE)." }
+}
 
 function Step($msg) {
   Write-Host ""
@@ -81,12 +85,11 @@ if (-not (Test-Path $releaseDir)) {
 if (-not $SkipBuild) {
   Step "Installing npm dependencies"
   npm install
+  Assert-ExitCode "npm install"
 
   Step "Running tauri:build (this takes a few minutes)"
   npm run tauri:build
-  if ($LASTEXITCODE -ne 0) {
-    throw "tauri:build failed."
-  }
+  Assert-ExitCode "tauri:build"
 }
 
 # 5. Locate the produced artifacts
@@ -132,6 +135,7 @@ if ($remoteTag) {
   Write-Host "Remote tag $Tag already exists; skipping tag push." -ForegroundColor Yellow
 } else {
   git push origin $Tag
+  Assert-ExitCode "git push origin $Tag"
 }
 
 # 8. Create the GitHub release
