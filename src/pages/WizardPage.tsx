@@ -73,7 +73,7 @@ function normalizeKnownModelKey(value: string): string {
 
 function normalizeModelKey(raw: string, fallbackProvider: string): string {
   const value = raw.trim();
-  if (!value) return `${fallbackProvider || "openai"}/gpt-5.2`;
+  if (!value) return `${fallbackProvider || "anthropic"}/claude-sonnet-4-6`;
   if (value.includes("/")) return normalizeKnownModelKey(value);
   return normalizeKnownModelKey(`${fallbackProvider || "openai"}/${value}`);
 }
@@ -415,7 +415,7 @@ export function WizardPage({ lang, initial, onBack, onSubmit }: WizardPageProps)
           (item) => normalizeProviderId(item.provider) === normalized
         );
         const keepCurrent = providerScopedModels.some((item) => item.key === prev.model_chain.primary);
-        const fallbackModelName = parseModelKey(prev.model_chain.primary)?.model ?? "gpt-5.2";
+        const fallbackModelName = parseModelKey(prev.model_chain.primary)?.model ?? "claude-sonnet-4-6";
         const nextPrimary = keepCurrent
           ? prev.model_chain.primary
           : (providerScopedModels[0]?.key ?? normalizeModelKey(fallbackModelName, normalized || prev.provider));
@@ -503,7 +503,7 @@ export function WizardPage({ lang, initial, onBack, onSubmit }: WizardPageProps)
     setForm((prev) => {
       // Keep current model name segment and only switch provider prefix.
       const parsed = parseModelKey(prev.model_chain.primary);
-      const modelName = (parsed?.model ?? "gpt-5.2").trim() || "gpt-5.2";
+      const modelName = (parsed?.model ?? "claude-sonnet-4-6").trim() || "claude-sonnet-4-6";
       if (!normalized) {
         return {
           ...prev,
@@ -571,9 +571,7 @@ export function WizardPage({ lang, initial, onBack, onSubmit }: WizardPageProps)
     });
   };
 
-  const busyMaskText = useMemo(() => t(lang, "switchingStep"), [lang]);
-  // Only block input while switching steps; catalog loading remains interactive.
-  const showBusyMask = isSwitchingStep;
+  // useTransition handles the rendering; a top-of-page subtle indicator is enough.
 
   const summary = [
     { label: t(lang, "installDir"), value: form.install_dir },
@@ -627,30 +625,49 @@ export function WizardPage({ lang, initial, onBack, onSubmit }: WizardPageProps)
       <h2>{t(lang, "wizardTitle")}</h2>
       <p className="lead">{t(lang, "wizardDesc")}</p>
 
-      <div className="wizard-stepper">
-        {WIZARD_STEPS.map((stepKey, index) => (
-          <button
-            key={stepKey}
-            type="button"
-            className={
-              index === stepIndex
-                ? "wizard-step-chip active"
-                : index < stepIndex
-                  ? "wizard-step-chip done"
-                  : "wizard-step-chip"
-            }
-            onClick={() => {
-              if (index <= stepIndex) {
-                startStepTransition(() => {
-                  setStepIndex(index);
-                  setError("");
-                });
-              }
-            }}
-          >
-            {index + 1}. {t(lang, stepKey)}
-          </button>
-        ))}
+      <div className="wizard-stepper" role="tablist">
+        {WIZARD_STEPS.map((stepKey, index) => {
+          const isCurrent = index === stepIndex;
+          const isDone = index < stepIndex;
+          const className = isCurrent
+            ? "wizard-step-chip active"
+            : isDone
+              ? "wizard-step-chip done"
+              : "wizard-step-chip";
+          return (
+            <button
+              key={stepKey}
+              type="button"
+              role="tab"
+              aria-selected={isCurrent}
+              className={className}
+              onClick={() => {
+                if (index === stepIndex) return;
+                if (index < stepIndex) {
+                  startStepTransition(() => {
+                    setStepIndex(index);
+                    setError("");
+                  });
+                  return;
+                }
+                // Forward jump: only if every step in between validates.
+                for (let i = stepIndex; i < index; i += 1) {
+                  const message = validateStep(i, form, lang);
+                  if (message) {
+                    setStepIndex(i);
+                    setError(message);
+                    return;
+                  }
+                }
+                setError("");
+                startStepTransition(() => setStepIndex(index));
+              }}
+            >
+              {index + 1}. {t(lang, stepKey)}
+              {isDone && <span className="step-check" aria-hidden="true"> ✓</span>}
+            </button>
+          );
+        })}
       </div>
 
       {stepIndex === 0 && (
@@ -706,32 +723,30 @@ export function WizardPage({ lang, initial, onBack, onSubmit }: WizardPageProps)
           </label>
 
           <label className="wide">
-            <span>{t(lang, "modelPresetOptions")}</span>
-            <select
-              value={currentPrimaryInOptions ? form.model_chain.primary : ""}
-              onChange={(e) => {
-                if (!e.target.value) return;
-                onPrimaryModelInput(e.target.value);
-              }}
-            >
-              <option value="">{t(lang, "manualModelEntry")}</option>
-              {providerModelOptionItems.map((item) => (
-                <option key={`preset-${item.key}`} value={item.key}>
-                  {item.key}
-                </option>
-              ))}
-            </select>
-            <small>{t(lang, "modelPresetHint")}</small>
-          </label>
-
-          <label className="wide">
             <span>{t(lang, "primaryModel")}</span>
-            <input
-              value={primaryModelInput}
-              onChange={(e) => onPrimaryModelInput(e.target.value)}
-              placeholder={modelCatalog.length > 0 ? "gpt-5.2 / provider/model" : "provider/model"}
-              list={modelCatalog.length > 0 && providerModelNames.length > 0 ? "wizard-model-options" : undefined}
-            />
+            <div className="model-picker">
+              <select
+                aria-label={t(lang, "modelPresetOptions")}
+                value={currentPrimaryInOptions ? form.model_chain.primary : ""}
+                onChange={(e) => {
+                  if (!e.target.value) return;
+                  onPrimaryModelInput(e.target.value);
+                }}
+              >
+                <option value="">{t(lang, "manualModelEntry")}</option>
+                {providerModelOptionItems.map((item) => (
+                  <option key={`preset-${item.key}`} value={item.key}>
+                    {item.key}
+                  </option>
+                ))}
+              </select>
+              <input
+                value={primaryModelInput}
+                onChange={(e) => onPrimaryModelInput(e.target.value)}
+                placeholder={modelCatalog.length > 0 ? "claude-sonnet-4-6 / provider/model" : "provider/model"}
+                list={modelCatalog.length > 0 && providerModelNames.length > 0 ? "wizard-model-options" : undefined}
+              />
+            </div>
             {modelCatalog.length > 0 && providerModelNames.length > 0 && (
               <datalist id="wizard-model-options">
                 {providerModelNames.map((modelName) => (
@@ -739,19 +754,24 @@ export function WizardPage({ lang, initial, onBack, onSubmit }: WizardPageProps)
                 ))}
               </datalist>
             )}
-            <small>{modelCatalog.length > 0 ? t(lang, "providerSelectHint") : t(lang, "noModelCatalog")}</small>
-            {modelCatalog.length > 0 && <small>{t(lang, "showingModels")}: {modelCatalog.length}</small>}
-            <small>{t(lang, "modelInputHint")}</small>
             <small>
-              {t(lang, "modelExamplesLabel")}: {MODEL_EXAMPLE_KEYS}
+              {modelCatalog.length > 0
+                ? `${t(lang, "modelPresetHint")} · ${t(lang, "showingModels")}: ${modelCatalog.length}`
+                : t(lang, "noModelCatalog")}
             </small>
-            <div className="inline">
-              <input value={MODEL_LIST_CLI_COMMAND} readOnly />
-              <button type="button" className="secondary" onClick={copyModelListCommand}>
-                {modelCliCopied ? t(lang, "copied") : t(lang, "copyCliCommand")}
-              </button>
-            </div>
-            <small>{t(lang, "modelCliHint")}</small>
+            <details className="inline-help">
+              <summary>{t(lang, "modelExamplesLabel")} & CLI</summary>
+              <div className="muted-inline">
+                {t(lang, "modelExamplesLabel")}: {MODEL_EXAMPLE_KEYS}
+              </div>
+              <div className="inline" style={{ marginTop: 6 }}>
+                <input value={MODEL_LIST_CLI_COMMAND} readOnly />
+                <button type="button" className="secondary" onClick={copyModelListCommand}>
+                  {modelCliCopied ? t(lang, "copied") : t(lang, "copyCliCommand")}
+                </button>
+              </div>
+              <small>{t(lang, "modelCliHint")}</small>
+            </details>
           </label>
 
           {modelsLoading && (
@@ -1128,14 +1148,10 @@ export function WizardPage({ lang, initial, onBack, onSubmit }: WizardPageProps)
       )}
 
       {error && <div className="alert error">{error}</div>}
-      {isSwitchingStep && <div className="alert">{t(lang, "switchingStep")}</div>}
-
-      {showBusyMask && (
-        <div className="busy-mask" aria-live="polite" aria-busy="true">
-          <div className="busy-card">
-            <span className="busy-spinner" />
-            <span>{busyMaskText}</span>
-          </div>
+      {isSwitchingStep && (
+        <div className="step-transition" aria-live="polite" aria-busy="true">
+          <span className="busy-spinner" />
+          <span>{t(lang, "switchingStep")}</span>
         </div>
       )}
 

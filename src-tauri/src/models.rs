@@ -103,9 +103,9 @@ impl Default for OpenClawConfigInput {
         Self {
             // Isolated by default: do not touch an existing `%USERPROFILE%\\.openclaw`.
             install_dir: "%LOCALAPPDATA%\\OpenClawInstaller\\openclaw".to_string(),
-            provider: "openai".to_string(),
+            provider: "anthropic".to_string(),
             model_chain: ModelChain {
-                primary: "openai/gpt-5.2".to_string(),
+                primary: "anthropic/claude-sonnet-4-6".to_string(),
                 fallbacks: vec![],
             },
             api_key: String::new(),

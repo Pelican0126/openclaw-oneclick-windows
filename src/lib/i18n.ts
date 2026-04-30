@@ -196,7 +196,27 @@ const zh: Dict = {
   uninstallCompleted: "卸载完成",
   done: "完成",
   show: "显示",
-  hide: "隐藏"
+  hide: "隐藏",
+  copy: "复制",
+  status: "状态",
+  steps: "步骤",
+  dependencies: "依赖",
+  portStatus: "端口状态",
+  portInUseBy: "占用进程",
+  portAvailable: "可用",
+  pid: "PID",
+  securityScore: "安全得分",
+  stepStatePending: "待执行",
+  stepStateRunning: "执行中",
+  stepStateDone: "已完成",
+  stepStateFailed: "失败",
+  welcomeChecking: "正在检测系统、网络与依赖...",
+  welcomePromptCheck: "首次使用请先点“立即检查”",
+  envOk: "环境就绪，可继续下一步",
+  envBlocked: "环境检查未通过，请处理后重试",
+  installFinishedHint: "已检测到当前已安装。",
+  autoInstallStarting: "已自动开始安装...",
+  pageEntering: "页面切换中..."
 };
 
 const en: Dict = {
@@ -393,7 +413,27 @@ const en: Dict = {
   uninstallCompleted: "Uninstall completed",
   done: "Done",
   show: "Show",
-  hide: "Hide"
+  hide: "Hide",
+  copy: "Copy",
+  status: "Status",
+  steps: "Steps",
+  dependencies: "Dependencies",
+  portStatus: "Port",
+  portInUseBy: "In use by",
+  portAvailable: "Available",
+  pid: "PID",
+  securityScore: "Security score",
+  stepStatePending: "pending",
+  stepStateRunning: "running",
+  stepStateDone: "done",
+  stepStateFailed: "failed",
+  welcomeChecking: "Probing system, network and dependencies...",
+  welcomePromptCheck: "Click \"Check Now\" to start the pre-flight checks.",
+  envOk: "Environment is ready. You can continue to the wizard.",
+  envBlocked: "Environment check has failures. Resolve them then retry.",
+  installFinishedHint: "OpenClaw is already installed on this machine.",
+  autoInstallStarting: "Starting install automatically...",
+  pageEntering: "Loading page..."
 };
 
 export const dict: Record<Language, Dict> = { zh, en };
