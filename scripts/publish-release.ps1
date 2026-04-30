@@ -5,6 +5,8 @@ param(
   [string]$Tag = "v1.1.0",
   # GitHub repo "owner/name". Override if you fork.
   [string]$Repo = "Pelican0126/openclaw-oneclick-windows",
+  # Skip git fetch/checkout/pull - publish from the current working tree as-is.
+  [switch]$NoPull,
   # Skip running the local secret scan before publish (not recommended).
   [switch]$SkipSecretScan,
   # Skip building - just tag and publish whatever is in release/.
@@ -42,11 +44,16 @@ if ($LASTEXITCODE -ne 0) {
   throw "gh is not authenticated. Run 'gh auth login' first."
 }
 
-# 2. Sync the working tree to the requested branch
-Step "Fetching origin and checking out $Branch"
-git fetch origin --tags
-git checkout $Branch
-git pull --ff-only origin $Branch
+# 2. Sync the working tree to the requested branch (unless -NoPull)
+if ($NoPull) {
+  $currentBranch = (git rev-parse --abbrev-ref HEAD).Trim()
+  Step "Skipping fetch/pull - using current working tree on '$currentBranch'"
+} else {
+  Step "Fetching origin and checking out $Branch"
+  git fetch origin --tags
+  git checkout $Branch
+  git pull --ff-only origin $Branch
+}
 
 # Confirm we are at the right version
 $pkgVersion = (Get-Content package.json -Raw | ConvertFrom-Json).version
