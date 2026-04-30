@@ -635,11 +635,18 @@ fn list_from_config_json() -> Vec<ModelCatalogItem> {
 fn fallback_catalog() -> Vec<ModelCatalogItem> {
     let mut items = vec![
         catalog_item("openai/gpt-5.2", "GPT-5.2"),
+        catalog_item("openai/gpt-5.3-codex", "GPT-5.3 Codex"),
         catalog_item("openai/gpt-4.1", "GPT-4.1"),
         catalog_item("openai/o3", "o3"),
         catalog_item("openai/o4-mini", "o4-mini"),
+        catalog_item("anthropic/claude-opus-4-7", "Claude Opus 4.7"),
         catalog_item("anthropic/claude-opus-4-6", "Claude Opus 4.6"),
+        catalog_item("anthropic/claude-sonnet-4-6", "Claude Sonnet 4.6"),
         catalog_item("anthropic/claude-sonnet-4-5", "Claude Sonnet 4.5"),
+        catalog_item(
+            "anthropic/claude-haiku-4-5-20251001",
+            "Claude Haiku 4.5",
+        ),
         catalog_item(
             "anthropic/claude-3-7-sonnet-latest",
             "Claude 3.7 Sonnet Latest",

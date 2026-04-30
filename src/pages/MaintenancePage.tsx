@@ -178,7 +178,7 @@ export function MaintenancePage({ lang, onStatusUpdate }: MaintenancePageProps) 
     if (current) {
       return current;
     }
-    return modelProviderOptions[0] ?? "openai";
+    return modelProviderOptions[0] ?? "anthropic";
   }, [modelPrimary, modelProviderOptions]);
 
   const providerScopedModels = useMemo(
@@ -417,7 +417,7 @@ export function MaintenancePage({ lang, onStatusUpdate }: MaintenancePageProps) 
     }
     const scoped = modelCatalog.filter((item) => normalizeProviderId(item.provider) === normalized);
     const keepCurrent = scoped.some((item) => item.key === modelPrimary);
-    const fallbackModelName = parseModelKey(modelPrimary)?.model ?? "gpt-5.2";
+    const fallbackModelName = parseModelKey(modelPrimary)?.model ?? "claude-sonnet-4-6";
     const nextPrimary = keepCurrent
       ? modelPrimary
       : (scoped[0]?.key ?? composeModelKey(normalized, fallbackModelName));
@@ -545,17 +545,27 @@ export function MaintenancePage({ lang, onStatusUpdate }: MaintenancePageProps) 
 
       <div className="card-grid">
         <div className="card">
-          <h3>Status</h3>
-          <p>PID: {status?.pid ?? "-"}</p>
-          <p>
-            {t(lang, "version")}: {status?.version || "-"}
-          </p>
-          <p>
-            {t(lang, "currentModel")}: {status?.current_model || "-"}
-          </p>
-          <p>
-            {t(lang, "health")}: {status?.health.ok ? "OK" : "FAIL"}
-          </p>
+          <h3>{t(lang, "status")}</h3>
+          <ul className="list">
+            <li>
+              <span>{t(lang, "pid")}</span>
+              <strong>{status?.pid ?? "-"}</strong>
+            </li>
+            <li>
+              <span>{t(lang, "version")}</span>
+              <strong>{status?.version || "-"}</strong>
+            </li>
+            <li>
+              <span>{t(lang, "currentModel")}</span>
+              <strong>{status?.current_model || "-"}</strong>
+            </li>
+            <li>
+              <span>{t(lang, "health")}</span>
+              <strong className={status?.health.ok ? "ok" : "error-text"}>
+                {status?.health.ok ? "OK" : "FAIL"}
+              </strong>
+            </li>
+          </ul>
           <button type="button" className="secondary" onClick={() => runAction("open-dashboard", () => openManagementUrl(managementUrl))}>
             {t(lang, "openDashboard")}
           </button>
@@ -596,6 +606,11 @@ export function MaintenancePage({ lang, onStatusUpdate }: MaintenancePageProps) 
               </a>
             </li>
             <li>
+              <a href="https://docs.openclaw.ai/channels/telegram" target="_blank" rel="noreferrer">
+                {t(lang, "telegramDocs")}
+              </a>
+            </li>
+            <li>
               <a href="https://docs.openclaw.ai/reference/channels" target="_blank" rel="noreferrer">
                 {t(lang, "wecomDocs")}
               </a>
@@ -606,7 +621,9 @@ export function MaintenancePage({ lang, onStatusUpdate }: MaintenancePageProps) 
         <div className="card">
           <h3>{t(lang, "riskTips")}</h3>
           <p>{t(lang, "riskTipsText")}</p>
-          <p>Security score: {riskScore}/100</p>
+          <p>
+            {t(lang, "securityScore")}: <strong>{riskScore}/100</strong>
+          </p>
           <button
             type="button"
             onClick={() => runAction("security check", async () => setSecurity(await securityCheck()))}
@@ -629,7 +646,7 @@ export function MaintenancePage({ lang, onStatusUpdate }: MaintenancePageProps) 
             </button>
             <button
               type="button"
-              className="secondary"
+              className="danger"
               onClick={() => {
                 if (!window.confirm(t(lang, "endOpenClawConfirm"))) return;
                 runAction("end-openclaw", endOpenClaw);
@@ -660,7 +677,7 @@ export function MaintenancePage({ lang, onStatusUpdate }: MaintenancePageProps) 
               hint={uninstallStage}
             />
           )}
-          <button type="button" className="secondary" onClick={uninstallNow} disabled={loading}>
+          <button type="button" className="danger" onClick={uninstallNow} disabled={loading}>
             {t(lang, "uninstallOpenClaw")}
           </button>
         </div>
@@ -733,7 +750,7 @@ export function MaintenancePage({ lang, onStatusUpdate }: MaintenancePageProps) 
             <input
               value={primaryModelInput}
               onChange={(e) => onPrimaryModelInput(e.target.value)}
-              placeholder={modelCatalog.length > 0 ? "gpt-5.2 / provider/model" : "provider/model"}
+              placeholder={modelCatalog.length > 0 ? "claude-sonnet-4-6 / provider/model" : "provider/model"}
               list={modelCatalog.length > 0 && providerModelNames.length > 0 ? "maintenance-model-options" : undefined}
             />
             {modelCatalog.length > 0 && providerModelNames.length > 0 && (

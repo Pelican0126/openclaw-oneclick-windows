@@ -1,4 +1,4 @@
-﻿import type { Language } from "../lib/types";
+import type { Language } from "../lib/types";
 import { t } from "../lib/i18n";
 
 interface LayoutProps {
@@ -7,8 +7,10 @@ interface LayoutProps {
   currentPage: string;
   onNavigate: (page: string) => void;
   statusText: string;
+  statusKind: "running" | "stopped" | "unknown";
   version: string;
   model: string;
+  navAvailability: Record<string, boolean>;
   children: React.ReactNode;
 }
 
@@ -26,8 +28,10 @@ export function Layout({
   currentPage,
   onNavigate,
   statusText,
+  statusKind,
   version,
   model,
+  navAvailability,
   children
 }: LayoutProps) {
   return (
@@ -37,31 +41,43 @@ export function Layout({
           <h1>{t(lang, "appTitle")}</h1>
           <p>{t(lang, "subtitle")}</p>
         </div>
-        <nav className="nav">
-          {pages.map((item) => (
-            <button
-              type="button"
-              key={item.key}
-              className={currentPage === item.key ? "nav-item active" : "nav-item"}
-              onClick={() => onNavigate(item.key)}
-            >
-              {t(lang, item.label)}
-            </button>
-          ))}
+        <nav className="nav" aria-label="Primary">
+          {pages.map((item) => {
+            const isActive = currentPage === item.key;
+            const isAvailable = navAvailability[item.key] !== false;
+            const className = `nav-item${isActive ? " active" : ""}${isAvailable ? "" : " disabled"}`;
+            return (
+              <button
+                type="button"
+                key={item.key}
+                className={className}
+                disabled={!isAvailable && !isActive}
+                aria-current={isActive ? "page" : undefined}
+                onClick={() => {
+                  if (isAvailable || isActive) onNavigate(item.key);
+                }}
+              >
+                {t(lang, item.label)}
+              </button>
+            );
+          })}
         </nav>
       </aside>
       <main className="content-wrap">
         <header className="topbar glass">
-          <div className="status-pill">{statusText}</div>
+          <div className={`status-pill status-${statusKind}`} role="status">
+            <span className="status-dot" aria-hidden="true" />
+            {statusText}
+          </div>
           <div className="meta">
             <span>
-              {t(lang, "version")}: {version || "-"}
+              {t(lang, "version")}: <strong>{version || "-"}</strong>
             </span>
             <span>
-              {t(lang, "currentModel")}: {model || "-"}
+              {t(lang, "currentModel")}: <strong>{model || "-"}</strong>
             </span>
           </div>
-          <div className="lang-switch">
+          <div className="lang-switch" role="group" aria-label={t(lang, "language")}>
             <span>{t(lang, "language")}</span>
             <button type="button" onClick={() => setLang("zh")} className={lang === "zh" ? "active" : ""}>
               中文
@@ -71,7 +87,9 @@ export function Layout({
             </button>
           </div>
         </header>
-        <section className="content glass">{children}</section>
+        <section key={currentPage} className="content glass page-fade">
+          {children}
+        </section>
       </main>
     </div>
   );

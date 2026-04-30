@@ -12,9 +12,9 @@ import { MaintenancePage } from "./pages/MaintenancePage";
 const defaultConfig: OpenClawConfigInput = {
   // Isolated by default: do not touch an existing `%USERPROFILE%\\.openclaw`.
   install_dir: "%LOCALAPPDATA%\\OpenClawInstaller\\openclaw",
-  provider: "openai",
+  provider: "anthropic",
   model_chain: {
-    primary: "openai/gpt-5.2",
+    primary: "anthropic/claude-sonnet-4-6",
     fallbacks: []
   },
   api_key: "",
@@ -81,6 +81,23 @@ function App() {
     return status.running ? t(lang, "statusRunning") : t(lang, "statusStopped");
   }, [lang, status]);
 
+  const statusKind: "running" | "stopped" | "unknown" = status
+    ? status.running
+      ? "running"
+      : "stopped"
+    : "unknown";
+
+  const navAvailability = useMemo<Record<string, boolean>>(() => {
+    const installed = !!status?.version && status.version !== "-";
+    return {
+      welcome: true,
+      wizard: !!env || page !== "welcome",
+      execute: page === "execute" || page === "success" || installed,
+      success: page === "success" || installed,
+      maintenance: true
+    };
+  }, [env, page, status?.version]);
+
   const runCheck = async () => {
     try {
       setChecking(true);
@@ -121,8 +138,10 @@ function App() {
       currentPage={page}
       onNavigate={(next) => setPage(next as AppPage)}
       statusText={statusText}
+      statusKind={statusKind}
       version={status?.version || "-"}
       model={status?.current_model || "-"}
+      navAvailability={navAvailability}
     >
       {page === "welcome" && (
         <WelcomePage

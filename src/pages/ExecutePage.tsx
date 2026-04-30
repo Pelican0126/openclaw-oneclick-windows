@@ -279,6 +279,17 @@ export function ExecutePage({ lang, payload, onBack, onSuccess }: ExecutePagePro
     runStep(0);
   };
 
+  // Auto-advance: after a step finishes, run the next one. The user already
+  // confirmed all settings in the wizard - they should not have to click
+  // "next step" between every install phase.
+  useEffect(() => {
+    if (!started || running || error) return;
+    if (waitingNext && currentStep < stepKeys.length) {
+      runStep(currentStep);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [waitingNext, started, running, error, currentStep]);
+
   const continueNext = () => {
     if (running || !started) return;
     runStep(currentStep);
@@ -386,16 +397,32 @@ export function ExecutePage({ lang, payload, onBack, onSuccess }: ExecutePagePro
 
       <div className="card-grid">
         <div className="card">
-          <h3>Steps</h3>
+          <h3>{t(lang, "steps")}</h3>
           <ul className="list">
-            {steps.map((step) => (
-              <li key={step.key}>
-                <span>{t(lang, step.key)}</span>
-                <span className={step.state === "done" ? "ok" : step.state === "failed" ? "error-text" : "warn"}>
-                  {step.state}
-                </span>
-              </li>
-            ))}
+            {steps.map((step) => {
+              const stateLabel =
+                step.state === "done"
+                  ? t(lang, "stepStateDone")
+                  : step.state === "failed"
+                    ? t(lang, "stepStateFailed")
+                    : step.state === "running"
+                      ? t(lang, "stepStateRunning")
+                      : t(lang, "stepStatePending");
+              const cls =
+                step.state === "done"
+                  ? "ok"
+                  : step.state === "failed"
+                    ? "error-text"
+                    : step.state === "running"
+                      ? "running"
+                      : "muted-inline";
+              return (
+                <li key={step.key} className={`step-row state-${step.state}`}>
+                  <span>{t(lang, step.key)}</span>
+                  <span className={cls}>{stateLabel}</span>
+                </li>
+              );
+            })}
           </ul>
           {error && <div className="alert error">{error}</div>}
           <div className="action-row">
@@ -420,7 +447,7 @@ export function ExecutePage({ lang, payload, onBack, onSuccess }: ExecutePagePro
           </div>
         </div>
         <div className="card log-card">
-          <h3>Logs</h3>
+          <h3>{t(lang, "logs")}</h3>
           <textarea value={logText} readOnly rows={20} />
           <div className="action-row">
             <button
@@ -430,7 +457,7 @@ export function ExecutePage({ lang, payload, onBack, onSuccess }: ExecutePagePro
                 navigator.clipboard.writeText(logText).catch(() => undefined);
               }}
             >
-              Copy
+              {t(lang, "copy")}
             </button>
             {logsDir && (
               <button
